@@ -2,7 +2,7 @@
 汇集工作中开发的MySQL管理工具
 
 ## monitor_ddl_progress.sh
-用于监控MySQL Online DDL的进度，简单，直接。虽然在MySQL 5.7中，performance_schema中新增了instrument实现该功能，但其将DDL分成了7个阶段，每次只能看到当前阶段的进度，无法预测下个阶段的进度，所以，从实践角度来说，意义不是太大。
+用于监控MySQL Online DDL的进度，简单，直接。
 
 #### 使用方法（Usage）
 只需输入表的当前目录，及表名，如：
