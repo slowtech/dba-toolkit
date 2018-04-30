@@ -139,9 +139,9 @@ table {
         <th style="width:6%">Response ratio</th>
         <th style="width:5%">Calls</th>        
         <th style="width:6%">R/Call</th>
-        <th style="width:13%">Item</th>
+        <th style="width:15%">QueryId</th>
         <th style="width:44%">Example</th>
-	<th style="width:15%">Remark</th>
+	<th style="width:13%">Remark</th>
     </tr>
     </thead>
 	{{range .slowlogs}}
@@ -151,9 +151,9 @@ table {
         <td style="width:6%">{{ .Response_ratio}}</td>
 	<td style="width:5%">{{ .Calls}}</td>        
         <td style="width:6%">{{ .R_Call}}</td>
-        <td style="width:13%">{{ .Item}}</td>
+        <td style="width:15%">{{ .QueryId}}</td>
         <td style="width:44%">{{ .Example}}</td>
-	<td style="width:15%"> </td>   
+	<td style="width:13%"> </td>   
     </tr>  
     {{end}}	
 </table>
@@ -270,7 +270,7 @@ func parseSlowLog(ptQueryDigestCmd string) {
 	}
 
         for _,v := range slowLogProfile {
-            v[2] = exampleSQLs[v[2]]
+            v[8] = exampleSQLs[v[2]]
            }
 
         type slowlog struct {
@@ -279,14 +279,14 @@ func parseSlowLog(ptQueryDigestCmd string) {
                 Response_ratio string
                 Calls string
                 R_Call string
-                Item string
+                QueryId string
                 Example string
         }
         
 	now := time.Now().Format("2006-01-02 15:04:05")
         slowlogs := []slowlog{}
         for _,value := range slowLogProfile {
-            slowlogrecord := slowlog{value[1],value[3],value[4],value[5],value[6],value[8],value[2]}
+            slowlogrecord := slowlog{value[1],value[3],value[4],value[5],value[6],value[2],value[8]}
             slowlogs = append(slowlogs,slowlogrecord)
         }
         var report = template.Must(template.New("slowlog").Parse(temp))
