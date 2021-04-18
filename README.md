@@ -1,5 +1,5 @@
-# MySQLTools
-汇集工作中开发的MySQL管理工具
+# dba-toolkit
+DBA工具集
 
 ## monitor_ddl_progress.sh
 用于监控MySQL Online DDL的进度，简单，直接。
