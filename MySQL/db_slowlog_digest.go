@@ -270,7 +270,14 @@ func parseSlowLog(ptQueryDigestCmd string) {
 	}
 
         for _,v := range slowLogProfile {
-            v[8] = exampleSQLs[v[2]]
+            for key := range exampleSQLs {
+		    miniQueryID := strings.Trim(v[2],".")
+		    if strings.Contains(key,miniQueryID) {
+			    v[8] = exampleSQLs[key]
+			    v[2] = key
+			    break
+			    }
+		    }
            }
 
         type slowlog struct {
