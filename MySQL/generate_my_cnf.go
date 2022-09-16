@@ -138,8 +138,6 @@ table_definition_cache = 65535
 table_open_cache_instances = 64
 `
 
-//{{range  $k, $v := .ExtraVariables_57}}{{ $k }} = {{$v}}{{end}}
-
 func GenerateMyCnf(args map[string]interface{}) (string) {
     serverId := getServerId()
 
@@ -147,11 +145,6 @@ func GenerateMyCnf(args map[string]interface{}) (string) {
     inputMem := args["memory"].(string)
     totalMem = formatMem(inputMem)
     var mycnfTemplate = template.Must(template.New("mycnf").Parse(config))
-
-    //type Variable struct {
-    //    DynamicVariables  map[string]interface{}
-    //    //ExtraVariables_57 map[string]interface{}
-    //}
 
     dynamicvariables:= make(map[string]interface{})
     dynamicvariables["basedir"] = args["basedir"]
@@ -182,16 +175,12 @@ func GenerateMyCnf(args map[string]interface{}) (string) {
     dynamicvariables["sort_buffer_size"] = strconv.Itoa(read_buffer_size*2) + "M"
     dynamicvariables["join_buffer_size"] = strconv.Itoa(read_buffer_size*2) + "M"
     dynamicvariables["innodb_log_file_size"] = strconv.Itoa(getInnodbLogFileSize(totalMem)) + "M"
-    //variable.ExtraVariables_57=make(map[string]string)
-    //variable.ExtraVariables_57["basedir"] = "/usr/local/mysql"
     b := bytes.NewBuffer(make([]byte, 0))
     w := bufio.NewWriter(b)
     mycnfTemplate.Execute(w, dynamicvariables)
     w.Flush()
 
     return b.String()
-    //totalMem := getTotalMem()
-    //var innodb_buffer_pool_size,innodb_buffer_pool_instances,innodb_log_file_size string
 }
 
 func getServerId() (string) {
