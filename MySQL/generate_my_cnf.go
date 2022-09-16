@@ -140,11 +140,11 @@ table_open_cache_instances = 64
 
 //{{range  $k, $v := .ExtraVariables_57}}{{ $k }} = {{$v}}{{end}}
 
-func GenerateMyCnf(args map[string]string) (string) {
+func GenerateMyCnf(args map[string]interface{}) (string) {
     serverId := getServerId()
 
     var totalMem int
-    inputMem := args["memory"]
+    inputMem := args["memory"].(string)
     totalMem = formatMem(inputMem)
     var mycnfTemplate = template.Must(template.New("mycnf").Parse(config))
 
@@ -169,7 +169,7 @@ func GenerateMyCnf(args map[string]string) (string) {
     } else {
         dynamicvariables["mysqld80"] = true
     }
-    if args["ssd"] == "0" {
+    if args["ssd"] == false {
         dynamicvariables["innodb_flush_neighbors"] = "1"
         dynamicvariables["innodb_io_capacity"] = "200"
         dynamicvariables["innodb_io_capacity_max"] = "500"
@@ -265,9 +265,9 @@ var  (
     mysql_version string
     basedir string
     datadir string
-    port string
+    port int
     memory string
-    ssd string
+    ssd bool
 )
 
 func init() {
@@ -275,9 +275,9 @@ func init() {
     flag.StringVar(&mysql_version,"mysql_version","8.0","MySQL version")
     flag.StringVar(&basedir,"basedir","/usr/local/mysql","Path to installation directory")
     flag.StringVar(&datadir,"datadir","/data","Path to the database root directory")
-    flag.StringVar(&port,"port","3306","Port number to use for connection")
+    flag.IntVar(&port,"port",3306,"Port number to use for connection")
     flag.StringVar(&memory,"memory","","The size of the server memory")
-    flag.StringVar(&ssd,"ssd","0", "Is it ssd")
+    flag.BoolVar(&ssd,"ssd",false, "Is it ssd")
 }
 
 func main() {
@@ -292,7 +292,7 @@ Options:
          return
 }
     flag.PrintDefaults()
-    mycnf_args := make(map[string]string)
+    mycnf_args := make(map[string]interface{})
     mycnf_args["basedir"] = basedir
     mycnf_args["datadir"] = datadir
     mycnf_args["port"] = port
