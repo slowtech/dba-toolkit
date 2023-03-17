@@ -1,13 +1,16 @@
 package main
 
 import (
-    "flag"
-    "fmt"
-    _ "github.com/go-sql-driver/mysql"
-    "github.com/jmoiron/sqlx"
-    "html/template"
-    "os"
-    "time"
+	"context"
+	"flag"
+	"fmt"
+	_ "github.com/go-sql-driver/mysql"
+        "golang.org/x/crypto/ssh/terminal"
+	"github.com/jmoiron/sqlx"
+	"html/template"
+	"log"
+	"os"
+	"time"
 )
 
 const temp = `
@@ -150,44 +153,67 @@ const temp = `
 </html>
 `
 
-var (
-    help     bool
-    host     string
-    username string
-    password string
-    database string
-    port     int
-)
+var currentTime time.Time
 
-func init() {
-    flag.BoolVar(&help, "help", false, "Display usage")
-    flag.StringVar(&host, "h", "localhost", "MySQL host")
-    flag.StringVar(&username, "u", "root", "MySQL username")
-    flag.StringVar(&password, "p", "", "MySQL password")
-    flag.StringVar(&database, "D", "performance_schema", "MySQL database")
-    flag.IntVar(&port, "P", 3306, "MySQL port")
+type Config struct {
+	Help       bool
+	Host       string
+	Username   string
+	Password   string
+	Database   string
+	Port       int
+	ResultFile string
+}
+
+func (c *Config) ParseFlags() {
+	resultFileName := fmt.Sprintf("/tmp/slow_log_summary_%s.html", currentTime.Format("2006_01_02_15_04_05"))
+	f := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	f.BoolVar(&c.Help, "help", false, "Display usage")
+	f.StringVar(&c.Host, "h", "localhost", "MySQL host")
+	f.StringVar(&c.Username, "u", "root", "MySQL username")
+	f.StringVar(&c.Password, "p", "", "MySQL password")
+	f.StringVar(&c.Database, "D", "performance_schema", "MySQL database")
+	f.IntVar(&c.Port, "P", 3306, "MySQL port")
+	f.StringVar(&c.ResultFile, "r", resultFileName, "Direct output to a given file")
+	f.Parse(os.Args[1:])
+}
+
+func (c *Config) PrintUsage() {
+	fmt.Fprintf(os.Stdout, `slow_log_summary version: 1.0.0
+Usage:
+slow_log_summary -h 10.0.1.231 -P 3306 -u root -p '123456' > /tmp/slow_log_summary.html
+Options:
+`)
+	flag.PrintDefaults()
 }
 
 func main() {
-    flag.Parse()
-    if help {
-        fmt.Fprintf(os.Stdout, `slow_log_summary version: 1.0.0
-Usage: 
-slow_log_summary -h 10.0.1.231 -P 3306 -u root -p '123456' > /tmp/slow_log_summary.html 
-Options:
-`)
-        flag.PrintDefaults()
-        return
-    }
-    // 创建数据库连接
-    dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", username, password, host, port, database)
-    db, err := sqlx.Connect("mysql", dsn)
+	cst := time.FixedZone("CST", 8*60*60)
+	currentTime = time.Now().In(cst)
+	conf := Config{}
+	conf.ParseFlags()
+	if conf.Help {
+		conf.PrintUsage()
+		return
+	}
 
-    if err != nil {
-        panic(err.Error())
-    }
+	if conf.Password == "" {
+		fmt.Print("Enter MySQL password: ")
+		bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			log.Fatalf("failed to read password: %v", err)
+		}
+		conf.Password = string(bytePassword)
+	}
+	// 创建数据库连接
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", conf.Username, conf.Password, conf.Host, conf.Port, conf.Database)
+	db, err := sqlx.Connect("mysql", dsn)
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
+	}
+	defer db.Close()
 
-    statement_analysis_sql := `
+	statement_analysis_sql := `
 SELECT 
     ROW_NUMBER() OVER (ORDER BY SUM_TIMER_WAIT DESC) AS row_num,
     sys.format_statement(DIGEST_TEXT) AS query, 
@@ -220,46 +246,51 @@ SELECT
 FROM performance_schema.events_statements_summary_by_digest
 `
 
-    type QuerySummary struct {
-        RowNumber        int    `db:"row_num"`
-        Query            string `db:"query"`
-        Database         string `db:"db"`
-        FullScan         string `db:"full_scan"`
-        ExecutionCount   int    `db:"exec_count"`
-        ErrorCount       int    `db:"err_count"`
-        WarningCount     int    `db:"warn_count"`
-        TotalLatency     string `db:"total_latency"`
-        MaxLatency       string `db:"max_latency"`
-        AvgLatency       string `db:"avg_latency"`
-        LockLatency      string `db:"lock_latency"`
-        CPULatency       string `db:"cpu_latency"`
-        RowsSent         int    `db:"rows_sent"`
-        RowsSentAvg      int    `db:"rows_sent_avg"`
-        RowsExamined     int    `db:"rows_examined"`
-        RowsExaminedAvg  int    `db:"rows_examined_avg"`
-        RowsAffected     int    `db:"rows_affected"`
-        RowsAffectedAvg  int    `db:"rows_affected_avg"`
-        TmpTables        int    `db:"tmp_tables"`
-        TmpDiskTables    int    `db:"tmp_disk_tables"`
-        RowsSorted       int    `db:"rows_sorted"`
-        SortMergePasses  int    `db:"sort_merge_passes"`
-        MaxControlledMem string `db:"max_controlled_memory"`
-        MaxTotalMem      string `db:"max_total_memory"`
-        Digest           string `db:"digest"`
-        FirstSeen        string `db:"first_seen"`
-        LastSeen         string `db:"last_seen"`
-        SampleQuery      string `db:"sample_query"`
-    }
-    var QuerySummaries []QuerySummary
-    err = db.Select(&QuerySummaries, statement_analysis_sql)
+	type QuerySummary struct {
+		RowNumber        int    `db:"row_num"`
+		Query            string `db:"query"`
+		Database         string `db:"db"`
+		FullScan         string `db:"full_scan"`
+		ExecutionCount   int    `db:"exec_count"`
+		ErrorCount       int    `db:"err_count"`
+		WarningCount     int    `db:"warn_count"`
+		TotalLatency     string `db:"total_latency"`
+		MaxLatency       string `db:"max_latency"`
+		AvgLatency       string `db:"avg_latency"`
+		LockLatency      string `db:"lock_latency"`
+		CPULatency       string `db:"cpu_latency"`
+		RowsSent         int    `db:"rows_sent"`
+		RowsSentAvg      int    `db:"rows_sent_avg"`
+		RowsExamined     int    `db:"rows_examined"`
+		RowsExaminedAvg  int    `db:"rows_examined_avg"`
+		RowsAffected     int    `db:"rows_affected"`
+		RowsAffectedAvg  int    `db:"rows_affected_avg"`
+		TmpTables        int    `db:"tmp_tables"`
+		TmpDiskTables    int    `db:"tmp_disk_tables"`
+		RowsSorted       int    `db:"rows_sorted"`
+		SortMergePasses  int    `db:"sort_merge_passes"`
+		MaxControlledMem string `db:"max_controlled_memory"`
+		MaxTotalMem      string `db:"max_total_memory"`
+		Digest           string `db:"digest"`
+		FirstSeen        string `db:"first_seen"`
+		LastSeen         string `db:"last_seen"`
+		SampleQuery      string `db:"sample_query"`
+	}
+	var QuerySummaries []QuerySummary
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = db.SelectContext(ctx, &QuerySummaries, statement_analysis_sql)
+	if err != nil {
+		log.Fatalf("failed to retrieve query summaries: %v", err)
+	}
 
-    if err != nil {
-        panic(err.Error())
-    }
-
-    cst := time.FixedZone("CST", 8*60*60)
-    now := time.Now().In(cst).Format("2006-01-02 15:04:05")
-    var report = template.Must(template.New("slowlog").Parse(temp))
-    report.Execute(os.Stdout, map[string]interface{}{"slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", host, port)})
+	file, err := os.Create(conf.ResultFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	now := currentTime.Format("2006-01-02 15:04:05")
+	var report = template.Must(template.New("slowlog").Parse(temp))
+	report.Execute(file, map[string]interface{}{"slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", conf.Host, conf.Port)})
+        fmt.Println(fmt.Sprintf("Output written to file %s", conf.ResultFile))
 }
-
