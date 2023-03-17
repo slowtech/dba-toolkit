@@ -5,8 +5,8 @@ import (
 	"flag"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
-        "golang.org/x/crypto/ssh/terminal"
 	"github.com/jmoiron/sqlx"
+	"golang.org/x/crypto/ssh/terminal"
 	"html/template"
 	"log"
 	"os"
@@ -176,15 +176,15 @@ func (c *Config) ParseFlags() {
 	f.IntVar(&c.Port, "P", 3306, "MySQL port")
 	f.StringVar(&c.ResultFile, "r", resultFileName, "Direct output to a given file")
 	f.Parse(os.Args[1:])
-}
-
-func (c *Config) PrintUsage() {
-	fmt.Fprintf(os.Stdout, `slow_log_summary version: 1.0.0
+	if c.Help {
+		fmt.Fprintf(os.Stdout, `slow_log_summary version: 1.0.0
 Usage:
-slow_log_summary -h 10.0.1.231 -P 3306 -u root -p '123456' > /tmp/slow_log_summary.html
+slow_log_summary -h 10.0.1.231 -P 3306 -u root -p '123456' -r /tmp/slow_log_summary.html
 Options:
 `)
-	flag.PrintDefaults()
+		f.PrintDefaults()
+                os.Exit(0)
+	}
 }
 
 func main() {
@@ -192,10 +192,6 @@ func main() {
 	currentTime = time.Now().In(cst)
 	conf := Config{}
 	conf.ParseFlags()
-	if conf.Help {
-		conf.PrintUsage()
-		return
-	}
 
 	if conf.Password == "" {
 		fmt.Print("Enter MySQL password: ")
@@ -203,6 +199,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to read password: %v", err)
 		}
+                fmt.Println()
 		conf.Password = string(bytePassword)
 	}
 	// 创建数据库连接
@@ -292,5 +289,5 @@ FROM performance_schema.events_statements_summary_by_digest
 	now := currentTime.Format("2006-01-02 15:04:05")
 	var report = template.Must(template.New("slowlog").Parse(temp))
 	report.Execute(file, map[string]interface{}{"slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", conf.Host, conf.Port)})
-        fmt.Println(fmt.Sprintf("Output written to file %s", conf.ResultFile))
+	fmt.Println(fmt.Sprintf("Output written to file %s", conf.ResultFile))
 }
