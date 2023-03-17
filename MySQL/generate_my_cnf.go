@@ -206,18 +206,24 @@ func getReadBufferSize(totalMem int) (read_buffer_size int) {
     return
 }
 
-func getInnodbBufferPoolSize(totalMem int) (innodb_buffer_pool_size int) {
+func getInnodbBufferPoolSize(totalMem int) int {
+    var innodb_buffer_pool_size int
+
     if totalMem < 1024 {
         innodb_buffer_pool_size = 128
     } else if totalMem <= 4*1024 {
-        innodb_buffer_pool_size = int(float32(totalMem) * 0.5)
+        innodb_buffer_pool_size = totalMem / 2
     } else {
         innodb_buffer_pool_size = int(float32(totalMem) * 0.75)
     }
-    return
+
+    return innodb_buffer_pool_size
 }
 
-func getInnodbLogFileSize(totalMem int) (innodb_log_file_size int) {
+
+func getInnodbLogFileSize(totalMem int) int {
+    var innodb_log_file_size int 
+
     if totalMem < 1024 {
         innodb_log_file_size = 48
     } else if totalMem <= 4*1024 {
@@ -227,7 +233,7 @@ func getInnodbLogFileSize(totalMem int) (innodb_log_file_size int) {
     } else {
         innodb_log_file_size = 1024
     }
-    return
+    return innodb_log_file_size
 }
 
 func formatMem(inputMem string) (totalMem int) {
