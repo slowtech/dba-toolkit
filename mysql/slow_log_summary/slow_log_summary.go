@@ -196,10 +196,10 @@ func main() {
 	if conf.Password == "" {
 		fmt.Print("Enter MySQL password: ")
 		bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+                fmt.Println()
 		if err != nil {
 			log.Fatalf("failed to read password: %v", err)
 		}
-                fmt.Println()
 		conf.Password = string(bytePassword)
 	}
 	// 创建数据库连接
