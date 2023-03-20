@@ -144,7 +144,7 @@ const temp = `
                                 <td style="width:5%" class="text-center">{{ .RowsSentAvg}}</td>
                                 <td style="width:5%" class="text-left">{{ .FirstSeen}}</td>
                                 <td style="width:5%" class="text-left">{{ .LastSeen}}</td>
-                                <td style="width:5%" class="text-left">{{ .Database}}</td>
+                                <td style="width:5%" class="text-center">{{ .Database}}</td>
                                 <td style="width:5%" class="text-center">{{ .FullScan}}</td>
                                 <td style="width:30%" class="text-left">{{ .SampleQuery}}</td>
                             </tr>
