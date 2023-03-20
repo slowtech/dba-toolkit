@@ -58,7 +58,7 @@ const temp = `
         }
         td:hover {
             background-color: #ddd;
-         } 
+         }
         .table-bordered {
             border: 1px solid #ddd;
             border-collapse: separate;
@@ -93,6 +93,9 @@ const temp = `
         .text-right {
             text-align: right;
         }
+        .text-left {
+            text-align: left;
+        }
         .bold {
             font-weight: bold;
         }
@@ -115,39 +118,42 @@ const temp = `
                 <span class="generated-time">实例地址：{{.ip_port}} 生成时间：{{.now}}</span>
                 <div class="table-responsive">
                     <table class="table table-bordered table-hover table-striped">
-                                    <thead>
-                <tr>
-        <th style="width:5%",class="text-center">Rank</th>        
-        <th style="width:5%",class="text-center">total_latency</th>
-        <th style="width:5%",class="text-center">exec_count</th>
-        <th style="width:5%",class="text-center">avg_latency</th>  
-        <th style="width:5%",class="text-center">rows_examined_avg</th>
-        <th style="width:5%",class="text-center">rows_sent_avg</th>
-        <th style="width:5%",class="text-center">first_seen</th>
-        <th style="width:5%",class="text-center">last_seen</th>
-        <th style="width:5%",class="text-center">db</th>
-        <th style="width:5%",class="text-center">full_scan</th>
-        <th style="width:30%",class="text-center">sample_query</th>
-                </tr>
-            </thead>
-            <tbody>
-                    {{range .slowlogs}}
-    <tr>
-        <td style="width:5%",class="text-center">{{ .RowNumber}}</td>        
-        <td style="width:5%",class="text-center">{{ .TotalLatency}}</td>
-        <td style="width:5%",class="text-center">{{ .ExecutionCount}}</td>
-        <td style="width:5%",class="text-center">{{ .AvgLatency}}</td>   
-        <td style="width:5%",class="text-center">{{ .RowsExaminedAvg}}</td>
-        <td style="width:5%",class="text-center">{{ .RowsSentAvg}}</td>
-        <td style="width:5%",class="text-center">{{ .FirstSeen}}</td>
-        <td style="width:5%",class="text-center">{{ .LastSeen}}</td>
-        <td style="width:5%",class="text-center">{{ .Database}}</td>
-        <td style="width:5%",class="text-center">{{ .FullScan}}</td>
-        <td style="width:30%",class="text-center">{{ .SampleQuery}}</td> 
-    </tr>  
-    {{end}} 
-            </tbody>
-        </table>
+                        <thead>
+                            <tr>
+                                <th style="width:5%" class="text-center">Rank</th>
+                                <th style="width:5%" class="text-center">total_latency</th>
+                                <th style="width:5%" class="text-center">exec_count</th>
+                                <th style="width:5%" class="text-center">avg_latency</th>
+                                <th style="width:5%" class="text-center">rows_examined_avg</th>
+                                <th style="width:5%" class="text-center">rows_sent_avg</th>
+                                <th style="width:5%" class="text-center">first_seen</th>
+                                <th style="width:5%" class="text-center">last_seen</th>
+                                <th style="width:5%" class="text-center">db</th>
+                                <th style="width:5%" class="text-center">full_scan</th>
+                                <th style="width:30%" class="text-center">sample_query</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .slowlogs}}
+                            <tr>
+                                <td style="width:5%" class="text-center">{{ .RowNumber}}</td>
+                                <td style="width:5%" class="text-center">{{ .TotalLatency}}</td>
+                                <td style="width:5%" class="text-center">{{ .ExecutionCount}}</td>
+                                <td style="width:5%" class="text-center">{{ .AvgLatency}}</td>
+                                <td style="width:5%" class="text-center">{{ .RowsExaminedAvg}}</td>
+                                <td style="width:5%" class="text-center">{{ .RowsSentAvg}}</td>
+                                <td style="width:5%" class="text-left">{{ .FirstSeen}}</td>
+                                <td style="width:5%" class="text-left">{{ .LastSeen}}</td>
+                                <td style="width:5%" class="text-center">{{ .Database}}</td>
+                                <td style="width:5%" class="text-center">{{ .FullScan}}</td>
+                                <td style="width:30%" class="text-left">{{ .SampleQuery}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 </body>
 </html>
@@ -215,7 +221,7 @@ SELECT
     ROW_NUMBER() OVER (ORDER BY SUM_TIMER_WAIT DESC) AS row_num,
     sys.format_statement(DIGEST_TEXT) AS query, 
     IFNULL(SCHEMA_NAME,'') AS db,
-    IF(SUM_NO_GOOD_INDEX_USED > 0 OR SUM_NO_INDEX_USED > 0, '*', '') AS full_scan,
+    IF(SUM_NO_GOOD_INDEX_USED > 0 OR SUM_NO_INDEX_USED > 0, 'Y', 'N') AS full_scan,
     COUNT_STAR AS exec_count, 
     SUM_ERRORS AS err_count, 
     SUM_WARNINGS AS warn_count, 
