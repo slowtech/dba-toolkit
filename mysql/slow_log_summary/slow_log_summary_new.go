@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -10,11 +11,10 @@ import (
 	"html/template"
 	"log"
 	"os"
+	"os/exec"
+	"regexp"
+	"strings"
 	"time"
-        "strings"
-        "regexp" 
-        "os/exec"
-        "bytes"
 )
 
 const temp = `
@@ -40,7 +40,7 @@ const temp = `
         table {
             font-size: 14px;
             width: 100%;
-            max-width: 100%;
+            max-width: 120%;
             margin-bottom: 20px;
             border-collapse: collapse;
             border-spacing: 0;
@@ -93,6 +93,8 @@ const temp = `
         }
         .text-center {
             text-align: center;
+            white-space: normal;
+            height: 100px;
         }
         .text-right {
             text-align: right;
@@ -119,39 +121,67 @@ const temp = `
         <div class="row">
             <div class="col-md-12">
                 <h2>Slow Log Summary</h2>
-                <span class="generated-time">实例地址：{{.ip_port}} 生成时间：{{.now}}</span>
+                {{if eq .slow_log_source "performance_schema"}}
+                    <span class="generated-time">慢日志来源：performance_schema 实例地址：{{.ip_port}} 生成时间：{{.now}}</span>
+                {{else}}
+                    <span class="generated-time">慢日志来源：{{.slow_log_file}} 生成时间：{{.now}}</span>
+                {{end}}
                 <div class="table-responsive">
                     <table class="table table-bordered table-hover table-striped">
                         <thead>
                             <tr>
-                                <th style="width:5%" class="text-center">Rank</th>
-                                <th style="width:5%" class="text-center">total_latency</th>
-                                <th style="width:5%" class="text-center">exec_count</th>
-                                <th style="width:5%" class="text-center">avg_latency</th>
-                                <th style="width:5%" class="text-center">rows_examined_avg</th>
-                                <th style="width:5%" class="text-center">rows_sent_avg</th>
-                                <th style="width:5%" class="text-center">first_seen</th>
-                                <th style="width:5%" class="text-center">last_seen</th>
-                                <th style="width:5%" class="text-center">db</th>
-                                <th style="width:5%" class="text-center">full_scan</th>
-                                <th style="width:30%" class="text-center">sample_query</th>
+                            {{if eq .slow_log_source "performance_schema"}}
+                                <th style="width:5%" class="text-center">排名</th>
+                                <th style="width:7%" class="text-center">总耗时</th>
+                                <th style="width:10%" class="text-center">总执行次数</th>
+                                <th style="width:10%" class="text-center">平均耗时</th>
+                                <th style="width:10%" class="text-left">平均扫描行数</th>
+                                <th style="width:10%" class="text-left">平均发送行数</th>
+                                <th style="width:10%" class="text-left">第一次出现时间</th>
+                                <th style="width:10%" class="text-left">最近一次出现时间</th>
+                                <th style="width:10%" class="text-center">数据库名</th>
+                                <th style="width:10%" class="text-center">是否全表扫描</th>
+                                <th style="width:30%" class="text-center">SQL语句</th>
+                            {{else}}
+                                <th style="width:5%">Rank</th>
+                                <th style="width:5%">Response time</th>
+                                <th style="width:5%">Response ratio</th>
+                                <th style="width:5%">Calls</th>
+                                <th style="width:5%">R/Call</th>
+                                <th style="width:15%">QueryId</th>
+                                <th style="width:60%">Example</th>
+                            {{end}}
                             </tr>
                         </thead>
                         <tbody>
-                            {{range .slowlogs}}
-                            <tr>
-                                <td style="width:5%" class="text-center">{{ .RowNumber}}</td>
-                                <td style="width:5%" class="text-center">{{ .TotalLatency}}</td>
-                                <td style="width:5%" class="text-center">{{ .ExecutionCount}}</td>
-                                <td style="width:5%" class="text-center">{{ .AvgLatency}}</td>
-                                <td style="width:5%" class="text-center">{{ .RowsExaminedAvg}}</td>
-                                <td style="width:5%" class="text-center">{{ .RowsSentAvg}}</td>
-                                <td style="width:5%" class="text-left">{{ .FirstSeen}}</td>
-                                <td style="width:5%" class="text-left">{{ .LastSeen}}</td>
-                                <td style="width:5%" class="text-center">{{ .Database}}</td>
-                                <td style="width:5%" class="text-center">{{ .FullScan}}</td>
-                                <td style="width:30%" class="text-left">{{ .SampleQuery}}</td>
-                            </tr>
+                            {{if eq .slow_log_source "performance_schema"}}
+                                {{range .slowlogs}}
+                                <tr>
+                                    <td style="width:5%" class="text-center">{{ .RowNumber}}</td>
+                                    <td style="width:7%" class="text-center">{{ .TotalLatency}}</td>
+                                    <td style="width:10%" class="text-center">{{ .ExecutionCount}}</td>
+                                    <td style="width:10%" class="text-center">{{ .AvgLatency}}</td>
+                                    <td style="width:10%" class="text-center">{{ .RowsExaminedAvg}}</td>
+                                    <td style="width:10%" class="text-center">{{ .RowsSentAvg}}</td>
+                                    <td style="width:10%" class="text-left">{{ .FirstSeen}}</td>
+                                    <td style="width:10%" class="text-left">{{ .LastSeen}}</td>
+                                    <td style="width:10%" class="text-center">{{ .Database}}</td>
+                                    <td style="width:10%" class="text-center">{{ .FullScan}}</td>
+                                    <td style="width:30%" class="text-left">{{ .SampleQuery}}</td>
+                                </tr>
+                               {{end}}
+                            {{else}}
+                                {{range .slowlogs}}
+                                <tr>
+                                    <td style="width:5%">{{ .Rank}}</td>        
+                                    <td style="width:5%">{{ .Response_time}}</td>
+                                    <td style="width:5%">{{ .Response_ratio}}</td>
+                                    <td style="width:5%">{{ .Calls}}</td>        
+                                    <td style="width:5%">{{ .R_Call}}</td>
+                                    <td style="width:15%">{{ .QueryId}}</td>
+                                    <td style="width:60%">{{ .Example}}</td>
+                                </tr>
+                                {{end}}
                             {{end}}
                         </tbody>
                     </table>
@@ -198,24 +228,24 @@ Options:
 }
 
 func executeCommand(command string, args []string) (string, error) {
-        cmd := exec.Command(command, args...)
+	cmd := exec.Command(command, args...)
 
-        var stdout bytes.Buffer
-        var stderr bytes.Buffer
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
 
-        cmd.Stdout = &stdout
-        cmd.Stderr = &stderr
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-        err := cmd.Run()
-        if err != nil {
-                return "", fmt.Errorf("command %s %v failed with %s", command, args, stderr.String())
-        }
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("command %s %v failed with %s", command, args, stderr.String())
+	}
 
-        return stdout.String(), nil
+	return stdout.String(), nil
 }
 
 func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string) {
-	slowLog,_ := executeCommand("perl", ptQueryDigestCmd)
+	slowLog, _ := executeCommand("perl", ptQueryDigestCmd)
 	lines := strings.Split(string(slowLog), "\n")
 	linesNums := len(lines)
 	profileFlag := false
@@ -284,9 +314,9 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string) {
 
 }
 
-func getSlowLogSummaryFromPerformanceSchema(Username string,Password string, Host string,Database string, Port int,now string ) (map[string]interface{}) {
+func getSlowLogSummaryFromPerformanceSchema(username string, password string, host string, database string, port int, now string) map[string]interface{} {
 	// 创建数据库连接
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", Username, Password, Host, Port, Database)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", username, password, host, port, database)
 	db, err := sqlx.Connect("mysql", dsn)
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
@@ -363,7 +393,7 @@ FROM performance_schema.events_statements_summary_by_digest
 	if err != nil {
 		log.Fatalf("failed to retrieve query summaries: %v", err)
 	}
-        return map[string]interface{}{"slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", Host, Port)}
+	return map[string]interface{}{"slow_log_source": "performance_schema", "slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", host, port)}
 }
 
 func main() {
@@ -388,7 +418,7 @@ func main() {
 	defer file.Close()
 	now := currentTime.Format("2006-01-02 15:04:05")
 	var report = template.Must(template.New("slowlog").Parse(temp))
-        report_content := getSlowLogSummaryFromPerformanceSchema(conf.Username,conf.Password, conf.Host,conf.Database, conf.Port, now) 
+	report_content := getSlowLogSummaryFromPerformanceSchema(conf.Username, conf.Password, conf.Host, conf.Database, conf.Port, now)
 	report.Execute(file, report_content)
 	fmt.Println(fmt.Sprintf("Output written to file %s", conf.ResultFile))
 }
