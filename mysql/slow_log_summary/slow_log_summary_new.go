@@ -39,8 +39,8 @@ const temp = `
         }
         table {
             font-size: 14px;
-            width: 100%;
-            max-width: 120%;
+            width: 120%;
+            max-width: 150%;
             margin-bottom: 20px;
             border-collapse: collapse;
             border-spacing: 0;
@@ -59,6 +59,7 @@ const temp = `
             border-bottom: 2px solid #ddd;
             color: #0074a3;
             background-color:#e5eefd;
+            white-space: nowrap;
         }
         td:hover {
             background-color: #ddd;
@@ -93,8 +94,6 @@ const temp = `
         }
         .text-center {
             text-align: center;
-            white-space: normal;
-            height: 100px;
         }
         .text-right {
             text-align: right;
@@ -131,17 +130,16 @@ const temp = `
                         <thead>
                             <tr>
                             {{if eq .slow_log_source "performance_schema"}}
-                                <th style="width:5%" class="text-center">排名</th>
-                                <th style="width:7%" class="text-center">总耗时</th>
-                                <th style="width:10%" class="text-center">总执行次数</th>
-                                <th style="width:10%" class="text-center">平均耗时</th>
-                                <th style="width:10%" class="text-left">平均扫描行数</th>
-                                <th style="width:10%" class="text-left">平均发送行数</th>
-                                <th style="width:10%" class="text-left">第一次出现时间</th>
-                                <th style="width:10%" class="text-left">最近一次出现时间</th>
-                                <th style="width:10%" class="text-center">数据库名</th>
-                                <th style="width:10%" class="text-center">是否全表扫描</th>
-                                <th style="width:30%" class="text-center">SQL语句</th>
+                                <th class="text-center">排名</th>
+                                <th class="text-center">总耗时</th>
+                                <th class="text-center">总执行次数</th>
+                                <th class="text-center">平均耗时</th>
+                                <th class="text-left">平均扫描行数</th>
+                                <th class="text-left">平均发送行数</th>
+                                <th class="text-left">第一次出现时间</th>
+                                <th class="text-left">最近一次出现时间</th>
+                                <th class="text-center">数据库名</th>
+                                <th style="width:50%" class="text-center">SQL语句</th>
                             {{else}}
                                 <th style="width:5%">Rank</th>
                                 <th style="width:5%">Response time</th>
@@ -157,17 +155,16 @@ const temp = `
                             {{if eq .slow_log_source "performance_schema"}}
                                 {{range .slowlogs}}
                                 <tr>
-                                    <td style="width:5%" class="text-center">{{ .RowNumber}}</td>
-                                    <td style="width:7%" class="text-center">{{ .TotalLatency}}</td>
-                                    <td style="width:10%" class="text-center">{{ .ExecutionCount}}</td>
-                                    <td style="width:10%" class="text-center">{{ .AvgLatency}}</td>
-                                    <td style="width:10%" class="text-center">{{ .RowsExaminedAvg}}</td>
-                                    <td style="width:10%" class="text-center">{{ .RowsSentAvg}}</td>
-                                    <td style="width:10%" class="text-left">{{ .FirstSeen}}</td>
-                                    <td style="width:10%" class="text-left">{{ .LastSeen}}</td>
-                                    <td style="width:10%" class="text-center">{{ .Database}}</td>
-                                    <td style="width:10%" class="text-center">{{ .FullScan}}</td>
-                                    <td style="width:30%" class="text-left">{{ .SampleQuery}}</td>
+                                    <td class="text-center">{{ .RowNumber}}</td>
+                                    <td class="text-center">{{ .TotalLatency}}</td>
+                                    <td class="text-center">{{ .ExecutionCount}}</td>
+                                    <td class="text-center">{{ .AvgLatency}}</td>
+                                    <td class="text-center">{{ .RowsExaminedAvg}}</td>
+                                    <td class="text-center">{{ .RowsSentAvg}}</td>
+                                    <td class="text-left">{{ .FirstSeen}}</td>
+                                    <td class="text-left">{{ .LastSeen}}</td>
+                                    <td class="text-left">{{ .Database}}</td>
+                                    <td style="width:50%" class="text-left">{{ .SampleQuery}}</td>
                                 </tr>
                                {{end}}
                             {{else}}
