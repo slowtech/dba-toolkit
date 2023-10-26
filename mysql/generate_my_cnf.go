@@ -37,6 +37,7 @@ default_time_zone = '+8:00'{{if or (.mysqld57) (.mysqld80)}}
 log_timestamps = system{{end}}
 tmpdir = {{.datadir}}/mysql/{{.port}}/tmp
 secure_file_priv = {{.datadir}}/mysql/{{.port}}/tmp
+
 # Slow log 
 slow_query_log = ON
 long_query_time = 0.5

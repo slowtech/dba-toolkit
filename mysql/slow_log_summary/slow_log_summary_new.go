@@ -194,32 +194,86 @@ var currentTime time.Time
 
 type Config struct {
 	Help       bool
+	Source     string
 	Host       string
 	Username   string
 	Password   string
 	Database   string
 	Port       int
+	PtCmd      string
+	Slowlog    string
+	All        bool
+	Since      string
+	Until      string
+	Yday       bool
 	ResultFile string
+}
+
+func customUsage() {
+	fmt.Fprintf(os.Stdout, `slow_log_summary version: 1.0.0
+Usage:
+slow_log_summary -source <source_type> -r <output_file> [other options]
+
+Common Options:
+  -help
+    Display usage
+
+Source Type Options:
+  -source string
+    Slow log source: 'perf' or 'slowlog' (default "perf")
+
+Output File Options:
+  -r string
+    Direct output to a given file (default "/tmp/slow_log_summary_2023_10_26_22_02_52.html")
+
+Options when source is 'perf':
+  -h string
+    MySQL host (default "localhost")
+  -P int
+    MySQL port (default 3306)
+  -u string
+    MySQL username (default "root")
+  -p string
+    MySQL password
+  -D string
+    MySQL database (default "performance_schema")
+
+Options when source is 'slowlog':
+  -pt string
+    Absolute path for pt-query-digest. Example: /usr/local/percona-toolkit/bin/pt-query-digest
+  -slowlog string
+    Absolute path for slowlog. Example: /var/log/mysql/node1-slow.log
+  -since string
+    Parse only queries newer than this value, YYYY-MM-DD [HH:MM:SS]
+  -until string
+    Parse only queries older than this value, YYYY-MM-DD [HH:MM:SS]
+  -all
+    Parse the whole slowlog
+  -yday
+    Parse yesterday's slowlog (default true)
+`)
 }
 
 func (c *Config) ParseFlags() {
 	resultFileName := fmt.Sprintf("/tmp/slow_log_summary_%s.html", currentTime.Format("2006_01_02_15_04_05"))
 	f := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	f.BoolVar(&c.Help, "help", false, "Display usage")
+	f.StringVar(&c.Source, "source", "perf", "Slow log source")
 	f.StringVar(&c.Host, "h", "localhost", "MySQL host")
+	f.IntVar(&c.Port, "P", 3306, "MySQL port")
 	f.StringVar(&c.Username, "u", "root", "MySQL username")
 	f.StringVar(&c.Password, "p", "", "MySQL password")
 	f.StringVar(&c.Database, "D", "performance_schema", "MySQL database")
-	f.IntVar(&c.Port, "P", 3306, "MySQL port")
+	f.StringVar(&c.PtCmd, "pt", "", "Absolute path for pt-query-digest. Example:/usr/local/percona-toolkit/bin/pt-query-digest")
+	f.StringVar(&c.Slowlog, "slowlog", "", "Absolute path for slowlog. Example:/var/log/mysql/node1-slow.log")
+	f.StringVar(&c.Since, "since", "", "Parse only queries newer than this value,YYYY-MM-DD [HH:MM:SS]")
+	f.StringVar(&c.Until, "until", "", "Parse only queries older than this value,YYYY-MM-DD [HH:MM:SS]")
+	f.BoolVar(&c.All, "all", false, "Parse the whole slowlog")
+	f.BoolVar(&c.Yday, "yday", true, "Parse yesterday's slowlog")
 	f.StringVar(&c.ResultFile, "r", resultFileName, "Direct output to a given file")
 	f.Parse(os.Args[1:])
 	if c.Help {
-		fmt.Fprintf(os.Stdout, `slow_log_summary version: 1.0.0
-Usage:
-slow_log_summary -h 10.0.1.231 -P 3306 -u root -p '123456' -r /tmp/slow_log_summary.html
-Options:
-`)
-		f.PrintDefaults()
+		customUsage()
 		os.Exit(0)
 	}
 }
@@ -241,8 +295,12 @@ func executeCommand(command string, args []string) (string, error) {
 	return stdout.String(), nil
 }
 
-func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string) {
-	slowLog, _ := executeCommand("perl", ptQueryDigestCmd)
+func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, now string) map[string]interface{} {
+	slowLog, err := executeCommand("perl", ptQueryDigestCmd)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	fmt.Println(slowLog)
 	lines := strings.Split(string(slowLog), "\n")
 	linesNums := len(lines)
 	profileFlag := false
@@ -251,6 +309,8 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string) {
 	slowLogProfile := [][]string{}
 	exampleSQLs := make(map[string]string)
 	var queryID string
+	fmt.Println(lines)
+	fmt.Println(123)
 	for k, line := range lines {
 		if strings.Contains(line, "# Profile") {
 			profileFlag = true
@@ -300,15 +360,15 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string) {
 		Example        string
 	}
 
-	now := time.Now().Format("2006-01-02 15:04:05")
 	slowlogs := []slowlog{}
 	for _, value := range slowLogProfile {
 		slowlogrecord := slowlog{value[1], value[3], value[4], value[5], value[6], value[2], value[8]}
 		slowlogs = append(slowlogs, slowlogrecord)
 	}
-	var report = template.Must(template.New("slowlog").Parse(temp))
-	report.Execute(os.Stdout, map[string]interface{}{"slowlogs": slowlogs, "now": now})
-
+	//var report = template.Must(template.New("slowlog").Parse(temp))
+	//report.Execute(os.Stdout, map[string]interface{}{"slowlogs": slowlogs, "now": now})
+	fmt.Println(slowlogs)
+	return map[string]interface{}{"slowlogs": slowlogs, "now": now}
 }
 
 func getSlowLogSummaryFromPerformanceSchema(username string, password string, host string, database string, port int, now string) map[string]interface{} {
@@ -349,7 +409,7 @@ SELECT
     DIGEST AS digest, 
     DATE_FORMAT(FIRST_SEEN, '%Y-%m-%d %H:%i:%s') AS first_seen, 
     DATE_FORMAT(LAST_SEEN, '%Y-%m-%d %H:%i:%s') AS last_seen,
-    query_sample_text As sample_query
+    QUERY_SAMPLE_TEXT As sample_query
 FROM performance_schema.events_statements_summary_by_digest
 `
 
@@ -393,29 +453,74 @@ FROM performance_schema.events_statements_summary_by_digest
 	return map[string]interface{}{"slow_log_source": "performance_schema", "slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", host, port)}
 }
 
+func validateAndConstructCmd(pt, slowlog, since, until string, all, yday bool) string {
+
+	if len(pt) == 0 || len(slowlog) == 0 {
+		log.Fatalf("--pt and --slowlog are both required")
+	}
+
+	if all && (len(since) != 0 || len(until) != 0) {
+		log.Fatalf("--all and --since(--until) are mutually exclusive")
+	}
+
+	today := time.Now().Format("2006-01-02")
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+
+	parameter := make(map[string]string)
+	if all {
+		parameter["since"] = ""
+		parameter["until"] = ""
+	} else if len(since) != 0 || len(until) != 0 {
+		if len(since) != 0 {
+			parameter["since"] = "--since " + since
+		}
+		if len(until) != 0 {
+			parameter["until"] = "--until " + until
+		}
+	} else if yday {
+		parameter["since"] = "--since " + yesterday
+		parameter["until"] = "--until " + today
+	}
+	ptQueryDigestCmd := strings.Join([]string{pt, parameter["since"], parameter["until"], slowlog}, " ")
+	fmt.Println(ptQueryDigestCmd)
+        return ptQueryDigestCmd
+
+}
+
 func main() {
 	cst := time.FixedZone("CST", 8*60*60)
 	currentTime = time.Now().In(cst)
 	conf := Config{}
 	conf.ParseFlags()
-
-	if conf.Password == "" {
-		fmt.Print("Enter MySQL password: ")
-		bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println()
-		if err != nil {
-			log.Fatalf("failed to read password: %v", err)
+        report_content := make(map[string]interface{})
+	now := currentTime.Format("2006-01-02 15:04:05")
+	if conf.Source == "perf" {
+		if conf.Password == "" {
+			fmt.Print("Enter MySQL password: ")
+			bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Println()
+			if err != nil {
+				log.Fatalf("failed to read password: %v", err)
+			}
+			conf.Password = string(bytePassword)
 		}
-		conf.Password = string(bytePassword)
+		report_content = getSlowLogSummaryFromPerformanceSchema(conf.Username, conf.Password, conf.Host, conf.Database, conf.Port, now)
 	}
+
+	if conf.Source == "slowlog" {
+		// query_cmd := "/usr/local/bin/pt-query-digest /data/mysql/3306/data/instance-chenchen-slow.log --limit 100%"
+
+		query_cmd := validateAndConstructCmd(conf.PtCmd, conf.Slowlog, conf.Since, conf.Until, conf.All, conf.Yday)
+
+		parts := strings.Fields(query_cmd)
+		report_content = getSlowLogSummaryByPtQueryDigest(parts, now)
+	}
+	var report = template.Must(template.New("slowlog").Parse(temp))
 	file, err := os.Create(conf.ResultFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
-	now := currentTime.Format("2006-01-02 15:04:05")
-	var report = template.Must(template.New("slowlog").Parse(temp))
-	report_content := getSlowLogSummaryFromPerformanceSchema(conf.Username, conf.Password, conf.Host, conf.Database, conf.Port, now)
 	report.Execute(file, report_content)
 	fmt.Println(fmt.Sprintf("Output written to file %s", conf.ResultFile))
 }
