@@ -258,7 +258,7 @@ func (c *Config) ParseFlags() {
 	resultFileName := fmt.Sprintf("/tmp/slow_log_summary_%s.html", currentTime.Format("2006_01_02_15_04_05"))
 	f := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	f.BoolVar(&c.Help, "help", false, "Display usage")
-	f.StringVar(&c.Source, "source", "perf", "Slow log source")
+	f.StringVar(&c.Source, "source", "", "Slow log source")
 	f.StringVar(&c.Host, "h", "localhost", "MySQL host")
 	f.IntVar(&c.Port, "P", 3306, "MySQL port")
 	f.StringVar(&c.Username, "u", "root", "MySQL username")
@@ -298,9 +298,8 @@ func executeCommand(command string, args []string) (string, error) {
 func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, now string) map[string]interface{} {
 	slowLog, err := executeCommand("perl", ptQueryDigestCmd)
 	if err != nil {
-		log.Fatalf("%v", err)
+		log.Fatalf("Error: Failed to execute the Perl command for pt-query-digest: %v", err)
 	}
-	fmt.Println(slowLog)
 	lines := strings.Split(string(slowLog), "\n")
 	linesNums := len(lines)
 	profileFlag := false
@@ -309,8 +308,6 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, now string) map
 	slowLogProfile := [][]string{}
 	exampleSQLs := make(map[string]string)
 	var queryID string
-	fmt.Println(lines)
-	fmt.Println(123)
 	for k, line := range lines {
 		if strings.Contains(line, "# Profile") {
 			profileFlag = true
@@ -371,12 +368,76 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, now string) map
 	return map[string]interface{}{"slowlogs": slowlogs, "now": now}
 }
 
+func formatPicoTime(timeVal float64) string {
+	// If argument is NaN, return "null".
+	if math.IsNaN(timeVal) {
+		return "null"
+	}
+
+	const (
+		nano  = 1000
+		micro = 1000 * nano
+		milli = 1000 * micro
+		sec   = 1000 * milli
+		min   = 60 * sec
+		hour  = 60 * min
+		day   = 24 * hour
+	)
+
+	// SI-approved time units.
+	var divisor uint64
+	var unit string
+
+	timeAbs := math.Abs(timeVal)
+
+	if timeAbs >= float64(day) {
+		divisor = day
+		unit = "d"
+	} else if timeAbs >= float64(hour) {
+		divisor = hour
+		unit = "h"
+	} else if timeAbs >= float64(min) {
+		divisor = min
+		unit = "min"
+	} else if timeAbs >= float64(sec) {
+		divisor = sec
+		unit = "s"
+	} else if timeAbs >= float64(milli) {
+		divisor = milli
+		unit = "ms"
+	} else if timeAbs >= float64(micro) {
+		divisor = micro
+		unit = "us"
+	} else if timeAbs >= float64(nano) {
+		divisor = nano
+		unit = "ns"
+	} else {
+		divisor = 1
+		unit = "ps"
+	}
+
+	var result string
+
+	if divisor == 1 {
+		result = fmt.Sprintf("%.3f %s", timeVal, unit)
+	} else {
+		value := timeVal / float64(divisor)
+		if math.Abs(value) >= 100000.0 {
+			result = fmt.Sprintf("%.2e %s", value, unit)
+		} else {
+			result = fmt.Sprintf("%.2f %s", value, unit)
+		}
+	}
+
+	return result
+}
+
 func getSlowLogSummaryFromPerformanceSchema(username string, password string, host string, database string, port int, now string) map[string]interface{} {
 	// 创建数据库连接
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", username, password, host, port, database)
 	db, err := sqlx.Connect("mysql", dsn)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		log.Fatalf("Error: Failed to establish a connection to the database: %v", err)
 	}
 	defer db.Close()
 
@@ -448,19 +509,93 @@ FROM performance_schema.events_statements_summary_by_digest
 	defer cancel()
 	err = db.SelectContext(ctx, &QuerySummaries, statement_analysis_sql)
 	if err != nil {
-		log.Fatalf("failed to retrieve query summaries: %v", err)
+		log.Fatalf("Error: Failed to retrieve query summaries from the database: %v", err)
 	}
 	return map[string]interface{}{"slow_log_source": "performance_schema", "slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", host, port)}
 }
 
+func getSlowLogSummaryFromPerformanceSchema(username string, password string, host string, database string, port int, now string) map[string]interface{} {
+	// 创建数据库连接
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", username, password, host, port, database)
+	db, err := sqlx.Connect("mysql", dsn)
+	if err != nil {
+		log.Fatalf("Error: Failed to establish a connection to the database: %v", err)
+	}
+	defer db.Close()
+
+	statement_analysis_sql := `
+SELECT
+    DIGEST_TEXT AS query,
+    IFNULL(SCHEMA_NAME,'') AS db,
+    IF(SUM_NO_GOOD_INDEX_USED > 0 OR SUM_NO_INDEX_USED > 0, 'Y', 'N') AS full_scan,
+    COUNT_STAR AS exec_count,
+    SUM_ERRORS AS err_count,
+    SUM_WARNINGS AS warn_count,
+    SUM_TIMER_WAIT AS total_latency,
+    MAX_TIMER_WAIT AS max_latency,
+    AVG_TIMER_WAIT AS avg_latency,
+    SUM_LOCK_TIME AS lock_latency,
+    SUM_ROWS_SENT AS rows_sent,
+    ROUND(IFNULL(SUM_ROWS_SENT / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_sent_avg,
+    SUM_ROWS_EXAMINED AS rows_examined,
+    ROUND(IFNULL(SUM_ROWS_EXAMINED / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_examined_avg,
+    SUM_ROWS_AFFECTED AS rows_affected,
+    ROUND(IFNULL(SUM_ROWS_AFFECTED / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_affected_avg,
+    SUM_CREATED_TMP_TABLES AS tmp_tables,
+    SUM_CREATED_TMP_DISK_TABLES AS tmp_disk_tables,
+    SUM_SORT_ROWS AS rows_sorted,
+    SUM_SORT_MERGE_PASSES AS sort_merge_passes,
+    DIGEST AS digest,
+    DATE_FORMAT(FIRST_SEEN, '%Y-%m-%d %H:%i:%s') AS first_seen,
+    DATE_FORMAT(LAST_SEEN, '%Y-%m-%d %H:%i:%s') AS last_seen
+FROM performance_schema.events_statements_summary_by_digest;
+`
+
+	type QuerySummary struct {
+		RowNumber        int    `db:"row_num"`
+		Query            string `db:"query"`
+		Database         string `db:"db"`
+		FullScan         string `db:"full_scan"`
+		ExecutionCount   int    `db:"exec_count"`
+		ErrorCount       int    `db:"err_count"`
+		WarningCount     int    `db:"warn_count"`
+		TotalLatency     float64 `db:"total_latency"`
+		MaxLatency       float64 `db:"max_latency"`
+		AvgLatency       float64 `db:"avg_latency"`
+		LockLatency      string `db:"lock_latency"`
+		CPULatency       string `db:"cpu_latency"`
+		RowsSent         int    `db:"rows_sent"`
+		RowsSentAvg      int    `db:"rows_sent_avg"`
+		RowsExamined     int    `db:"rows_examined"`
+		RowsExaminedAvg  int    `db:"rows_examined_avg"`
+		RowsAffected     int    `db:"rows_affected"`
+		RowsAffectedAvg  int    `db:"rows_affected_avg"`
+		TmpTables        int    `db:"tmp_tables"`
+		TmpDiskTables    int    `db:"tmp_disk_tables"`
+		RowsSorted       int    `db:"rows_sorted"`
+		SortMergePasses  int    `db:"sort_merge_passes"`
+		Digest           string `db:"digest"`
+		FirstSeen        string `db:"first_seen"`
+		LastSeen         string `db:"last_seen"`
+	}
+	var QuerySummaries []QuerySummary
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = db.SelectContext(ctx, &QuerySummaries, statement_analysis_sql)
+	if err != nil {
+		log.Fatalf("Error: Failed to retrieve query summaries from the database: %v", err)
+	}
+	return map[string]interface{}{"slow_log_source": "performance_schema", "slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", host, port)}
+
 func validateAndConstructCmd(pt, slowlog, since, until string, all, yday bool) string {
 
 	if len(pt) == 0 || len(slowlog) == 0 {
-		log.Fatalf("--pt and --slowlog are both required")
+		log.Fatalf("Error: Both --pt and --slowlog parameters are required.")
 	}
 
 	if all && (len(since) != 0 || len(until) != 0) {
-		log.Fatalf("--all and --since(--until) are mutually exclusive")
+		log.Fatalf("Error: The --all and --since (or --until) parameters are mutually exclusive.")
+
 	}
 
 	today := time.Now().Format("2006-01-02")
@@ -483,7 +618,7 @@ func validateAndConstructCmd(pt, slowlog, since, until string, all, yday bool) s
 	}
 	ptQueryDigestCmd := strings.Join([]string{pt, parameter["since"], parameter["until"], slowlog}, " ")
 	fmt.Println(ptQueryDigestCmd)
-        return ptQueryDigestCmd
+	return ptQueryDigestCmd
 
 }
 
@@ -492,15 +627,19 @@ func main() {
 	currentTime = time.Now().In(cst)
 	conf := Config{}
 	conf.ParseFlags()
-        report_content := make(map[string]interface{})
+	report_content := make(map[string]interface{})
 	now := currentTime.Format("2006-01-02 15:04:05")
+	log.SetFlags(log.Lshortfile)
+	if len(conf.Source) == 0 {
+		log.Fatalf("Error: The --source parameter is required.")
+	}
 	if conf.Source == "perf" {
 		if conf.Password == "" {
 			fmt.Print("Enter MySQL password: ")
 			bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
 			fmt.Println()
 			if err != nil {
-				log.Fatalf("failed to read password: %v", err)
+				log.Fatalf("Error: Failed to read the password - %v", err)
 			}
 			conf.Password = string(bytePassword)
 		}
@@ -508,10 +647,7 @@ func main() {
 	}
 
 	if conf.Source == "slowlog" {
-		// query_cmd := "/usr/local/bin/pt-query-digest /data/mysql/3306/data/instance-chenchen-slow.log --limit 100%"
-
 		query_cmd := validateAndConstructCmd(conf.PtCmd, conf.Slowlog, conf.Since, conf.Until, conf.All, conf.Yday)
-
 		parts := strings.Fields(query_cmd)
 		report_content = getSlowLogSummaryByPtQueryDigest(parts, now)
 	}
