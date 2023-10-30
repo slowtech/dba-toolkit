@@ -10,9 +10,11 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 	"html/template"
 	"log"
+	"math"
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -136,6 +138,14 @@ const temp = `
                                 <th class="text-center">平均耗时</th>
                                 <th class="text-left">平均扫描行数</th>
                                 <th class="text-left">平均发送行数</th>
+                                {{with index .slowlogs 0}}
+                                   {{if .CpuTimeAvg}}
+                                       <th class="text-left">CPU平均耗时</th>
+                                   {{end}}
+                                   {{if .MaxTotalMemory}}
+                                       <th class="text-center">最大内存使用量</th>
+                                   {{end}}
+                                {{end}}
                                 <th class="text-left">第一次出现时间</th>
                                 <th class="text-left">最近一次出现时间</th>
                                 <th class="text-center">数据库名</th>
@@ -155,16 +165,22 @@ const temp = `
                             {{if eq .slow_log_source "performance_schema"}}
                                 {{range .slowlogs}}
                                 <tr>
-                                    <td class="text-center">{{ .RowNumber}}</td>
+                                    <td class="text-center">{{ .RowNum}}</td>
                                     <td class="text-center">{{ .TotalLatency}}</td>
                                     <td class="text-center">{{ .ExecutionCount}}</td>
                                     <td class="text-center">{{ .AvgLatency}}</td>
                                     <td class="text-center">{{ .RowsExaminedAvg}}</td>
                                     <td class="text-center">{{ .RowsSentAvg}}</td>
+                                    {{if .CpuTimeAvg}}
+                                        <td class="text-center">{{ .CpuTimeAvg }}</td>
+                                    {{end}}
+                                    {{if .MaxTotalMemory}}
+                                        <td class="text-center">{{ .MaxTotalMemory }}</td>
+                                    {{end}}
                                     <td class="text-left">{{ .FirstSeen}}</td>
                                     <td class="text-left">{{ .LastSeen}}</td>
-                                    <td class="text-left">{{ .Database}}</td>
-                                    <td style="width:50%" class="text-left">{{ .SampleQuery}}</td>
+                                    <td class="text-center">{{ .Database}}</td>
+                                    <td style="width:40%" class="text-left">{{ .SampleQuery}}</td>
                                 </tr>
                                {{end}}
                             {{else}}
@@ -368,8 +384,12 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, now string) map
 	return map[string]interface{}{"slowlogs": slowlogs, "now": now}
 }
 
-func formatPicoTime(timeVal float64) string {
-	// If argument is NaN, return "null".
+func formatPicoTime(val string) string {
+	timeVal, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		log.Fatalf("Error: Conversion failed: %v\n", err)
+	}
+
 	if math.IsNaN(timeVal) {
 		return "null"
 	}
@@ -384,7 +404,6 @@ func formatPicoTime(timeVal float64) string {
 		day   = 24 * hour
 	)
 
-	// SI-approved time units.
 	var divisor uint64
 	var unit string
 
@@ -432,86 +451,22 @@ func formatPicoTime(timeVal float64) string {
 	return result
 }
 
-func getSlowLogSummaryFromPerformanceSchema(username string, password string, host string, database string, port int, now string) map[string]interface{} {
-	// 创建数据库连接
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", username, password, host, port, database)
-	db, err := sqlx.Connect("mysql", dsn)
-	if err != nil {
-		log.Fatalf("Error: Failed to establish a connection to the database: %v", err)
-	}
-	defer db.Close()
+func IsMySQLVersionGreaterOrEqual(version1, version2 string) bool {
+	parts1 := strings.Split(version1, ".")
+	parts2 := strings.Split(version2, ".")
 
-	statement_analysis_sql := `
-SELECT 
-    ROW_NUMBER() OVER (ORDER BY SUM_TIMER_WAIT DESC) AS row_num,
-    sys.format_statement(DIGEST_TEXT) AS query, 
-    IFNULL(SCHEMA_NAME,'') AS db,
-    IF(SUM_NO_GOOD_INDEX_USED > 0 OR SUM_NO_INDEX_USED > 0, 'Y', 'N') AS full_scan,
-    COUNT_STAR AS exec_count, 
-    SUM_ERRORS AS err_count, 
-    SUM_WARNINGS AS warn_count, 
-    FORMAT_PICO_TIME(SUM_TIMER_WAIT) AS total_latency,
-    FORMAT_PICO_TIME(MAX_TIMER_WAIT) AS max_latency, 
-    FORMAT_PICO_TIME(AVG_TIMER_WAIT) AS avg_latency,
-    FORMAT_PICO_TIME(SUM_LOCK_TIME) AS lock_latency, 
-    FORMAT_PICO_TIME(SUM_CPU_TIME) AS cpu_latency,
-    SUM_ROWS_SENT AS rows_sent,
-    ROUND(IFNULL(SUM_ROWS_SENT / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_sent_avg,
-    SUM_ROWS_EXAMINED AS rows_examined,
-    ROUND(IFNULL(SUM_ROWS_EXAMINED / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_examined_avg,
-    SUM_ROWS_AFFECTED AS rows_affected,
-    ROUND(IFNULL(SUM_ROWS_AFFECTED / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_affected_avg,
-    SUM_CREATED_TMP_TABLES AS tmp_tables, 
-    SUM_CREATED_TMP_DISK_TABLES AS tmp_disk_tables, 
-    SUM_SORT_ROWS AS rows_sorted, 
-    SUM_SORT_MERGE_PASSES AS sort_merge_passes,
-    FORMAT_BYTES(MAX_CONTROLLED_MEMORY) AS max_controlled_memory, 
-    FORMAT_BYTES(MAX_TOTAL_MEMORY) AS max_total_memory,
-    DIGEST AS digest, 
-    DATE_FORMAT(FIRST_SEEN, '%Y-%m-%d %H:%i:%s') AS first_seen, 
-    DATE_FORMAT(LAST_SEEN, '%Y-%m-%d %H:%i:%s') AS last_seen,
-    QUERY_SAMPLE_TEXT As sample_query
-FROM performance_schema.events_statements_summary_by_digest
-`
+	for i := 0; i < len(parts1) && i < len(parts2); i++ {
+		v1, _ := strconv.Atoi(parts1[i])
+		v2, _ := strconv.Atoi(parts2[i])
 
-	type QuerySummary struct {
-		RowNumber        int    `db:"row_num"`
-		Query            string `db:"query"`
-		Database         string `db:"db"`
-		FullScan         string `db:"full_scan"`
-		ExecutionCount   int    `db:"exec_count"`
-		ErrorCount       int    `db:"err_count"`
-		WarningCount     int    `db:"warn_count"`
-		TotalLatency     string `db:"total_latency"`
-		MaxLatency       string `db:"max_latency"`
-		AvgLatency       string `db:"avg_latency"`
-		LockLatency      string `db:"lock_latency"`
-		CPULatency       string `db:"cpu_latency"`
-		RowsSent         int    `db:"rows_sent"`
-		RowsSentAvg      int    `db:"rows_sent_avg"`
-		RowsExamined     int    `db:"rows_examined"`
-		RowsExaminedAvg  int    `db:"rows_examined_avg"`
-		RowsAffected     int    `db:"rows_affected"`
-		RowsAffectedAvg  int    `db:"rows_affected_avg"`
-		TmpTables        int    `db:"tmp_tables"`
-		TmpDiskTables    int    `db:"tmp_disk_tables"`
-		RowsSorted       int    `db:"rows_sorted"`
-		SortMergePasses  int    `db:"sort_merge_passes"`
-		MaxControlledMem string `db:"max_controlled_memory"`
-		MaxTotalMem      string `db:"max_total_memory"`
-		Digest           string `db:"digest"`
-		FirstSeen        string `db:"first_seen"`
-		LastSeen         string `db:"last_seen"`
-		SampleQuery      string `db:"sample_query"`
+		if v1 > v2 {
+			return true
+		} else if v1 < v2 {
+			return false
+		}
 	}
-	var QuerySummaries []QuerySummary
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err = db.SelectContext(ctx, &QuerySummaries, statement_analysis_sql)
-	if err != nil {
-		log.Fatalf("Error: Failed to retrieve query summaries from the database: %v", err)
-	}
-	return map[string]interface{}{"slow_log_source": "performance_schema", "slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", host, port)}
+
+	return true
 }
 
 func getSlowLogSummaryFromPerformanceSchema(username string, password string, host string, database string, port int, now string) map[string]interface{} {
@@ -522,70 +477,114 @@ func getSlowLogSummaryFromPerformanceSchema(username string, password string, ho
 		log.Fatalf("Error: Failed to establish a connection to the database: %v", err)
 	}
 	defer db.Close()
+	var statementAnalysisSQL string
 
-	statement_analysis_sql := `
-SELECT
-    DIGEST_TEXT AS query,
-    IFNULL(SCHEMA_NAME,'') AS db,
-    IF(SUM_NO_GOOD_INDEX_USED > 0 OR SUM_NO_INDEX_USED > 0, 'Y', 'N') AS full_scan,
-    COUNT_STAR AS exec_count,
-    SUM_ERRORS AS err_count,
-    SUM_WARNINGS AS warn_count,
-    SUM_TIMER_WAIT AS total_latency,
-    MAX_TIMER_WAIT AS max_latency,
-    AVG_TIMER_WAIT AS avg_latency,
-    SUM_LOCK_TIME AS lock_latency,
-    SUM_ROWS_SENT AS rows_sent,
-    ROUND(IFNULL(SUM_ROWS_SENT / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_sent_avg,
-    SUM_ROWS_EXAMINED AS rows_examined,
-    ROUND(IFNULL(SUM_ROWS_EXAMINED / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_examined_avg,
-    SUM_ROWS_AFFECTED AS rows_affected,
-    ROUND(IFNULL(SUM_ROWS_AFFECTED / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_affected_avg,
-    SUM_CREATED_TMP_TABLES AS tmp_tables,
-    SUM_CREATED_TMP_DISK_TABLES AS tmp_disk_tables,
-    SUM_SORT_ROWS AS rows_sorted,
-    SUM_SORT_MERGE_PASSES AS sort_merge_passes,
-    DIGEST AS digest,
-    DATE_FORMAT(FIRST_SEEN, '%Y-%m-%d %H:%i:%s') AS first_seen,
-    DATE_FORMAT(LAST_SEEN, '%Y-%m-%d %H:%i:%s') AS last_seen
-FROM performance_schema.events_statements_summary_by_digest;
-`
+	var mysqlVersion string
+	err = db.Get(&mysqlVersion, "SELECT VERSION()")
+
+	if err != nil {
+		log.Fatalf("Error: Failed to retrieve MySQL version: %v", err)
+	}
+
+	// 检查 MySQL 版本
+	var queryColumn string
+	if strings.HasPrefix(mysqlVersion, "8") {
+		queryColumn = "QUERY_SAMPLE_TEXT AS query"
+		if IsMySQLVersionGreaterOrEqual(mysqlVersion, "8.0.28") {
+			// 查询 performance_schema.setup_consumers 中 'events_statements_cpu' 记录的 enabled 列
+			var eventsStatementsCPUEnabled string
+			err = db.Get(&eventsStatementsCPUEnabled, "SELECT enabled FROM performance_schema.setup_consumers WHERE name='events_statements_cpu'")
+			if err != nil {
+				log.Fatalf("Error: Failed to retrieve events_statements_cpu enabled status: %v", err)
+			}
+			if ventsStatementsCPUEnabled == "YES" {
+				queryColumn += ", ROUND(IFNULL(SUM_CPU_TIME / NULLIF(COUNT_STAR, 0), 0), 0) AS cup_time_avg"
+			}
+		}
+		if IsMySQLVersionGreaterOrEqual(mysqlVersion, "8.0.31") {
+			queryColumn += ", sys.format_bytes(MAX_TOTAL_MEMORY) AS max_total_memory"
+		}
+	} else if strings.HasPrefix(mysqlVersion, "5.7") || strings.HasPrefix(mysqlVersion, "5.6") {
+		queryColumn = "DIGEST_TEXT AS query"
+	} else {
+		log.Fatalf("Error: MySQL version %s is not supported. This tool only supports MySQL 5.6 and above.", mysqlVersion)
+	}
+
+	statementAnalysisSQL = fmt.Sprintf(`
+    SELECT
+        IFNULL(SCHEMA_NAME,'') AS db,
+        IF(SUM_NO_GOOD_INDEX_USED > 0 OR SUM_NO_INDEX_USED > 0, 'Y', 'N') AS full_scan,
+        COUNT_STAR AS exec_count,
+        SUM_ERRORS AS err_count,
+        SUM_WARNINGS AS warn_count,
+        SUM_TIMER_WAIT AS total_latency,
+        MAX_TIMER_WAIT AS max_latency,
+        AVG_TIMER_WAIT AS avg_latency,
+        SUM_LOCK_TIME AS lock_latency,
+        SUM_ROWS_SENT AS rows_sent,
+        ROUND(IFNULL(SUM_ROWS_SENT / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_sent_avg,
+        SUM_ROWS_EXAMINED AS rows_examined,
+        ROUND(IFNULL(SUM_ROWS_EXAMINED / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_examined_avg,
+        SUM_ROWS_AFFECTED AS rows_affected,
+        ROUND(IFNULL(SUM_ROWS_AFFECTED / NULLIF(COUNT_STAR, 0), 0), 0) AS rows_affected_avg,
+        SUM_CREATED_TMP_TABLES AS tmp_tables,
+        SUM_CREATED_TMP_DISK_TABLES AS tmp_disk_tables,
+        SUM_SORT_ROWS AS rows_sorted,
+        SUM_SORT_MERGE_PASSES AS sort_merge_passes,
+        DIGEST AS digest,
+        DATE_FORMAT(FIRST_SEEN, '%%Y-%%m-%%d %%H:%%i:%%s') AS first_seen,
+        DATE_FORMAT(LAST_SEEN, '%%Y-%%m-%%d %%H:%%i:%%s') AS last_seen,
+        %s
+    FROM performance_schema.events_statements_summary_by_digest
+    ORDER BY total_latency DESC
+`, queryColumn)
+	fmt.Println(statementAnalysisSQL)
 
 	type QuerySummary struct {
-		RowNumber        int    `db:"row_num"`
-		Query            string `db:"query"`
-		Database         string `db:"db"`
-		FullScan         string `db:"full_scan"`
-		ExecutionCount   int    `db:"exec_count"`
-		ErrorCount       int    `db:"err_count"`
-		WarningCount     int    `db:"warn_count"`
-		TotalLatency     float64 `db:"total_latency"`
-		MaxLatency       float64 `db:"max_latency"`
-		AvgLatency       float64 `db:"avg_latency"`
-		LockLatency      string `db:"lock_latency"`
-		CPULatency       string `db:"cpu_latency"`
-		RowsSent         int    `db:"rows_sent"`
-		RowsSentAvg      int    `db:"rows_sent_avg"`
-		RowsExamined     int    `db:"rows_examined"`
-		RowsExaminedAvg  int    `db:"rows_examined_avg"`
-		RowsAffected     int    `db:"rows_affected"`
-		RowsAffectedAvg  int    `db:"rows_affected_avg"`
-		TmpTables        int    `db:"tmp_tables"`
-		TmpDiskTables    int    `db:"tmp_disk_tables"`
-		RowsSorted       int    `db:"rows_sorted"`
-		SortMergePasses  int    `db:"sort_merge_passes"`
-		Digest           string `db:"digest"`
-		FirstSeen        string `db:"first_seen"`
-		LastSeen         string `db:"last_seen"`
+		RowNum          int
+		SampleQuery     string `db:"query"`
+		Database        string `db:"db"`
+		FullScan        string `db:"full_scan"`
+		ExecutionCount  int    `db:"exec_count"`
+		ErrorCount      int    `db:"err_count"`
+		WarningCount    int    `db:"warn_count"`
+		TotalLatency    string `db:"total_latency"`
+		MaxLatency      string `db:"max_latency"`
+		AvgLatency      string `db:"avg_latency"`
+		LockLatency     string `db:"lock_latency"`
+		RowsSent        int    `db:"rows_sent"`
+		RowsSentAvg     int    `db:"rows_sent_avg"`
+		RowsExamined    int    `db:"rows_examined"`
+		RowsExaminedAvg int    `db:"rows_examined_avg"`
+		RowsAffected    int    `db:"rows_affected"`
+		RowsAffectedAvg int    `db:"rows_affected_avg"`
+		TmpTables       int    `db:"tmp_tables"`
+		TmpDiskTables   int    `db:"tmp_disk_tables"`
+		RowsSorted      int    `db:"rows_sorted"`
+		SortMergePasses int    `db:"sort_merge_passes"`
+		Digest          string `db:"digest"`
+		FirstSeen       string `db:"first_seen"`
+		LastSeen        string `db:"last_seen"`
+		CpuTimeAvg      string `db:"cup_time_avg"`
+		MaxTotalMemory  string `db:"max_total_memory"`
 	}
 	var QuerySummaries []QuerySummary
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err = db.SelectContext(ctx, &QuerySummaries, statement_analysis_sql)
+	err = db.SelectContext(ctx, &QuerySummaries, statementAnalysisSQL)
 	if err != nil {
 		log.Fatalf("Error: Failed to retrieve query summaries from the database: %v", err)
 	}
+	for i, summary := range QuerySummaries {
+		summary.RowNum = i + 1
+		summary.TotalLatency = formatPicoTime(summary.TotalLatency)
+		summary.MaxLatency = formatPicoTime(summary.MaxLatency)
+		summary.AvgLatency = formatPicoTime(summary.AvgLatency)
+		summary.LockLatency = formatPicoTime(summary.LockLatency)
+		QuerySummaries[i] = summary
+	}
 	return map[string]interface{}{"slow_log_source": "performance_schema", "slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", host, port)}
+}
 
 func validateAndConstructCmd(pt, slowlog, since, until string, all, yday bool) string {
 
