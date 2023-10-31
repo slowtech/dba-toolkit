@@ -151,13 +151,13 @@ const temp = `
                                 <th class="text-center">数据库名</th>
                                 <th style="width:50%" class="text-center">SQL语句</th>
                             {{else}}
-                                <th style="width:5%">Rank</th>
-                                <th style="width:5%">Response time</th>
-                                <th style="width:5%">Response ratio</th>
-                                <th style="width:5%">Calls</th>
-                                <th style="width:5%">R/Call</th>
+                                <th style="width:5%">排名</th>
+                                <th style="width:5%">总耗时</th>
+                                <th style="width:5%">耗时占比</th>
+                                <th style="width:5%">总执行次数</th>
+                                <th style="width:5%">平均耗时</th>
                                 <th style="width:15%">QueryId</th>
-                                <th style="width:60%">Example</th>
+                                <th style="width:60%">SQL语句</th>
                             {{end}}
                             </tr>
                         </thead>
