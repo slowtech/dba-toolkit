@@ -122,48 +122,50 @@ const temp = `
         <div class="row">
             <div class="col-md-12">
                 <h2>Slow Log Summary</h2>
-                {{if eq .slow_log_source "performance_schema"}}
-                    <span class="generated-time">慢日志来源：performance_schema 实例地址：{{.ip_port}} 生成时间：{{.now}}</span>
+                {{if eq .slowLogSource "performance_schema"}}
+                    <span class="generated-time">慢日志来源：performance_schema 实例地址：{{.instanceAddr}} 实例版本：{{.mysqlVersion}} 生成时间：{{.now}}</span>
                 {{else}}
-                    <span class="generated-time">慢日志来源：{{.slow_log_file}} 生成时间：{{.now}}</span>
+                    <span class="generated-time">慢日志来源：{{.slowLogSource}} 生成时间：{{.now}}</span>
                 {{end}}
                 <div class="table-responsive">
                     <table class="table table-bordered table-hover table-striped">
                         <thead>
                             <tr>
-                            {{if eq .slow_log_source "performance_schema"}}
+                            {{if eq .slowLogSource "performance_schema"}}
                                 <th class="text-center">排名</th>
                                 <th class="text-center">总耗时</th>
                                 <th class="text-center">总执行次数</th>
                                 <th class="text-center">平均耗时</th>
-                                <th class="text-left">平均扫描行数</th>
-                                <th class="text-left">平均发送行数</th>
-                                {{with index .slowlogs 0}}
+                                <th class="text-center">平均扫描行数</th>
+                                <th class="text-center">平均发送行数</th>
+                                {{with index .slowLogSummary 0}}
                                    {{if .CpuTimeAvg}}
-                                       <th class="text-left">CPU平均耗时</th>
+                                       <th class="text-center">CPU平均耗时</th>
                                    {{end}}
                                    {{if .MaxTotalMemory}}
                                        <th class="text-center">最大内存使用量</th>
                                    {{end}}
                                 {{end}}
-                                <th class="text-left">第一次出现时间</th>
-                                <th class="text-left">最近一次出现时间</th>
+                                <th class="text-center">第一次出现时间</th>
+                                <th class="text-center">最近一次出现时间</th>
                                 <th class="text-center">数据库名</th>
-                                <th style="width:50%" class="text-center">SQL语句</th>
+                                <th style="width:50%" class="text-left">SQL语句</th>
                             {{else}}
-                                <th style="width:5%">排名</th>
-                                <th style="width:5%">总耗时</th>
-                                <th style="width:5%">耗时占比</th>
-                                <th style="width:5%">总执行次数</th>
-                                <th style="width:5%">平均耗时</th>
-                                <th style="width:15%">QueryId</th>
-                                <th style="width:60%">SQL语句</th>
+                                <th style="text-center">排名</th>
+                                <th style="text-center">总耗时</th>
+                                <th style="text-center">耗时占比</th>
+                                <th style="text-center">总执行次数</th>
+                                <th style="text-center">平均耗时</th>
+                                <th class="text-center">平均扫描行数</th>
+                                <th class="text-center">平均发送行数</th>
+                                <th style="text-center">QueryId</th>
+                                <th style="width:50%" class="text-left">SQL语句</th>
                             {{end}}
                             </tr>
                         </thead>
                         <tbody>
-                            {{if eq .slow_log_source "performance_schema"}}
-                                {{range .slowlogs}}
+                            {{if eq .slowLogSource "performance_schema"}}
+                                {{range .slowLogSummary}}
                                 <tr>
                                     <td class="text-center">{{ .RowNum}}</td>
                                     <td class="text-center">{{ .TotalLatency}}</td>
@@ -177,22 +179,24 @@ const temp = `
                                     {{if .MaxTotalMemory}}
                                         <td class="text-center">{{ .MaxTotalMemory }}</td>
                                     {{end}}
-                                    <td class="text-left">{{ .FirstSeen}}</td>
-                                    <td class="text-left">{{ .LastSeen}}</td>
+                                    <td class="text-center">{{ .FirstSeen}}</td>
+                                    <td class="text-center">{{ .LastSeen}}</td>
                                     <td class="text-center">{{ .Database}}</td>
-                                    <td style="width:40%" class="text-left">{{ .SampleQuery}}</td>
+                                    <td style="width:50%" class="text-left">{{ .SampleQuery}}</td>
                                 </tr>
                                {{end}}
                             {{else}}
-                                {{range .slowlogs}}
+                                {{range .slowLogSummary}}
                                 <tr>
-                                    <td style="width:5%">{{ .Rank}}</td>        
-                                    <td style="width:5%">{{ .Response_time}}</td>
-                                    <td style="width:5%">{{ .Response_ratio}}</td>
-                                    <td style="width:5%">{{ .Calls}}</td>        
-                                    <td style="width:5%">{{ .R_Call}}</td>
-                                    <td style="width:15%">{{ .QueryId}}</td>
-                                    <td style="width:60%">{{ .Example}}</td>
+                                    <td class="text-center">{{ .Rank}}</td>        
+                                    <td class="text-center">{{ .ResponseTime}}</td>
+                                    <td class="text-center">{{ .ResponseRatio}}</td>
+                                    <td class="text-center">{{ .Calls}}</td>        
+				    <td class="text-center">{{ .R_Call}}</td>
+				    <td class="text-center">{{ .RowsExamine}}</td>
+                                    <td class="text-center">{{ .RowsSent}}</td>
+                                    <td class="text-center">{{ .QueryId}}</td>
+                                    <td style="width:50%" class="text-left">{{ .Example}}</td>
                                 </tr>
                                 {{end}}
                             {{end}}
@@ -256,7 +260,7 @@ Options when source is 'perf':
 
 Options when source is 'slowlog':
   -pt string
-    Absolute path for pt-query-digest. Example: /usr/local/percona-toolkit/bin/pt-query-digest
+    Absolute path for pt-query-digest. Example: /usr/local/bin/pt-query-digest
   -slowlog string
     Absolute path for slowlog. Example: /var/log/mysql/node1-slow.log
   -since string
@@ -311,7 +315,7 @@ func executeCommand(command string, args []string) (string, error) {
 	return stdout.String(), nil
 }
 
-func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, now string) map[string]interface{} {
+func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, slowlogFile string, now string) map[string]interface{} {
 	slowLog, err := executeCommand("perl", ptQueryDigestCmd)
 	if err != nil {
 		log.Fatalf("Error: Failed to execute the Perl command for pt-query-digest: %v", err)
@@ -321,8 +325,9 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, now string) map
 	profileFlag := false
 	exampleFlag := false
 	exampleSQL := []string{}
+	exampleSQLInfo := make(map[string]string)
 	slowLogProfile := [][]string{}
-	exampleSQLs := make(map[string]string)
+	exampleSQLs := make(map[string]map[string]string)
 	var queryID string
 	for k, line := range lines {
 		if strings.Contains(line, "# Profile") {
@@ -344,44 +349,51 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, now string) map
 			queryID = re.FindStringSubmatch(line)[1]
 			exampleFlag = true
 			exampleSQL = []string{}
+			exampleSQLInfo = make(map[string]string)
+		} else if exampleFlag && (strings.HasPrefix(line, "# Rows sent") || strings.HasPrefix(line, "# Rows examine")) {
+			re, _ := regexp.Compile(" +")
+			rowToArray := re.Split(line, 9)
+			exampleSQLInfo[rowToArray[2]] = rowToArray[7]
 		} else if exampleFlag && (!strings.HasPrefix(line, "#")) && len(line) != 0 {
 			exampleSQL = append(exampleSQL, line)
 		} else if exampleFlag && (len(line) == 0 || k == (linesNums-1)) {
 			exampleFlag = false
-			exampleSQLs[queryID] = strings.Join(exampleSQL, "\n")
+			exampleSQLInfo["exampleSQL"] = strings.Join(exampleSQL, "\n")
+			exampleSQLs[queryID] = exampleSQLInfo
 		}
 	}
 
-	for _, v := range slowLogProfile {
+	for i, v := range slowLogProfile {
 		for key := range exampleSQLs {
 			miniQueryID := strings.Trim(v[2], ".")
 			if strings.Contains(key, miniQueryID) {
-				v[8] = exampleSQLs[key]
+				v[8] = exampleSQLs[key]["exampleSQL"]
 				v[2] = key
+				v = append(v, exampleSQLs[key]["sent"], exampleSQLs[key]["examine"])
+				slowLogProfile[i] = v
 				break
 			}
 		}
 	}
 
 	type slowlog struct {
-		Rank           string
-		Response_time  string
-		Response_ratio string
-		Calls          string
-		R_Call         string
-		QueryId        string
-		Example        string
+		Rank          string
+		ResponseTime  string
+		ResponseRatio string
+		Calls         string
+		R_Call        string
+		QueryId       string
+		Example       string
+		RowsSent      string
+		RowsExamine   string
 	}
 
 	slowlogs := []slowlog{}
 	for _, value := range slowLogProfile {
-		slowlogrecord := slowlog{value[1], value[3], value[4], value[5], value[6], value[2], value[8]}
+		slowlogrecord := slowlog{value[1], value[3], value[4], value[5], value[6], value[2], value[8], value[9], value[10]}
 		slowlogs = append(slowlogs, slowlogrecord)
 	}
-	//var report = template.Must(template.New("slowlog").Parse(temp))
-	//report.Execute(os.Stdout, map[string]interface{}{"slowlogs": slowlogs, "now": now})
-	fmt.Println(slowlogs)
-	return map[string]interface{}{"slowlogs": slowlogs, "now": now}
+	return map[string]interface{}{"slowLogSource": slowlogFile, "slowLogSummary": slowlogs, "now": now}
 }
 
 func formatPicoTime(val string) string {
@@ -452,6 +464,9 @@ func formatPicoTime(val string) string {
 }
 
 func IsMySQLVersionGreaterOrEqual(version1, version2 string) bool {
+	// 对于 5.7.44-log 之类的版本号，首先会去掉中划线及中划线之后的字符
+	version1 = strings.Split(version1, "-")[0]
+	version2 = strings.Split(version2, "-")[0]
 	parts1 := strings.Split(version1, ".")
 	parts2 := strings.Split(version2, ".")
 
@@ -497,12 +512,12 @@ func getSlowLogSummaryFromPerformanceSchema(username string, password string, ho
 			if err != nil {
 				log.Fatalf("Error: Failed to retrieve events_statements_cpu enabled status: %v", err)
 			}
-			if ventsStatementsCPUEnabled == "YES" {
+			if eventsStatementsCPUEnabled == "YES" {
 				queryColumn += ", ROUND(IFNULL(SUM_CPU_TIME / NULLIF(COUNT_STAR, 0), 0), 0) AS cup_time_avg"
 			}
 		}
 		if IsMySQLVersionGreaterOrEqual(mysqlVersion, "8.0.31") {
-			queryColumn += ", sys.format_bytes(MAX_TOTAL_MEMORY) AS max_total_memory"
+			queryColumn += ", FORMAT_BYTES(MAX_TOTAL_MEMORY) AS max_total_memory"
 		}
 	} else if strings.HasPrefix(mysqlVersion, "5.7") || strings.HasPrefix(mysqlVersion, "5.6") {
 		queryColumn = "DIGEST_TEXT AS query"
@@ -538,7 +553,6 @@ func getSlowLogSummaryFromPerformanceSchema(username string, password string, ho
     FROM performance_schema.events_statements_summary_by_digest
     ORDER BY total_latency DESC
 `, queryColumn)
-	fmt.Println(statementAnalysisSQL)
 
 	type QuerySummary struct {
 		RowNum          int
@@ -583,7 +597,7 @@ func getSlowLogSummaryFromPerformanceSchema(username string, password string, ho
 		summary.LockLatency = formatPicoTime(summary.LockLatency)
 		QuerySummaries[i] = summary
 	}
-	return map[string]interface{}{"slow_log_source": "performance_schema", "slowlogs": QuerySummaries, "now": now, "ip_port": fmt.Sprintf("%s:%d", host, port)}
+	return map[string]interface{}{"slowLogSource": "performance_schema", "slowLogSummary": QuerySummaries, "now": now, "instanceAddr": fmt.Sprintf("%s:%d", host, port), "mysqlVersion": mysqlVersion}
 }
 
 func validateAndConstructCmd(pt, slowlog, since, until string, all, yday bool) string {
@@ -616,9 +630,7 @@ func validateAndConstructCmd(pt, slowlog, since, until string, all, yday bool) s
 		parameter["until"] = "--until " + today
 	}
 	ptQueryDigestCmd := strings.Join([]string{pt, parameter["since"], parameter["until"], slowlog}, " ")
-	fmt.Println(ptQueryDigestCmd)
 	return ptQueryDigestCmd
-
 }
 
 func main() {
@@ -648,7 +660,7 @@ func main() {
 	if conf.Source == "slowlog" {
 		query_cmd := validateAndConstructCmd(conf.PtCmd, conf.Slowlog, conf.Since, conf.Until, conf.All, conf.Yday)
 		parts := strings.Fields(query_cmd)
-		report_content = getSlowLogSummaryByPtQueryDigest(parts, now)
+		report_content = getSlowLogSummaryByPtQueryDigest(parts, conf.Slowlog, now)
 	}
 	var report = template.Must(template.New("slowlog").Parse(temp))
 	file, err := os.Create(conf.ResultFile)
