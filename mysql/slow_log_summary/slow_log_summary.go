@@ -242,7 +242,7 @@ Usage:
 slow_log_summary -source <source_type> -r <output_file> [other options]
 
 Example:
-./slow_log_summary -source perf -h 10.0.0.168 -P 3306 -u root
+./slow_log_summary -source perf -h 10.0.0.168 -P 3306 -u root -p '123456'
 ./slow_log_summary -source slowlog -pt /usr/local/bin/pt-query-digest -slowlog /data/mysql/3306/data/n1-slow.log -all
 
 Common Options:
@@ -296,7 +296,7 @@ func (c *Config) ParseFlags() {
 	f.StringVar(&c.Username, "u", "root", "MySQL username")
 	f.StringVar(&c.Password, "p", "", "MySQL password")
 	f.StringVar(&c.Database, "D", "performance_schema", "MySQL database")
-	f.StringVar(&c.PtCmd, "pt", "", "Absolute path for pt-query-digest. Example:/usr/local/percona-toolkit/bin/pt-query-digest")
+	f.StringVar(&c.PtCmd, "pt", "", "Absolute path for pt-query-digest. Example:/usr/local/bin/pt-query-digest")
 	f.StringVar(&c.Slowlog, "slowlog", "", "Absolute path for slowlog. Example:/var/log/mysql/node1-slow.log")
 	f.StringVar(&c.Since, "since", "", "Parse only queries newer than this value,YYYY-MM-DD [HH:MM:SS]")
 	f.StringVar(&c.Until, "until", "", "Parse only queries older than this value,YYYY-MM-DD [HH:MM:SS]")
