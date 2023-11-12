@@ -130,7 +130,7 @@ const temp = `
                 {{if eq .slowLogSource "performance_schema"}}
                     <span class="generated-time">慢日志来源：performance_schema 实例地址：{{.instanceAddr}} 实例版本：{{.mysqlVersion}} 生成时间：{{.now}}</span>
                 {{else}}
-                    <span class="generated-time">慢日志来源：{{.slowLogSource}} 生成时间：{{.now}}</span>
+                    <span class="generated-time">慢日志来源：{{.slowLogSource}} 分析时间范围：{{.timeRangeStart}} ~ {{.timeRangeEnd}} 生成时间：{{.now}}</span>
                 {{end}}
                 <div class="table-responsive">
                     <table class="table table-bordered table-hover table-striped">
@@ -154,7 +154,12 @@ const temp = `
                                 <th class="text-center">第一次出现时间</th>
                                 <th class="text-center">最近一次出现时间</th>
                                 <th class="text-center">数据库名</th>
-                                <th style="width:50%" class="text-left">SQL语句</th>
+                                <th class="text-left">Digest Text</th>
+                                {{with index .slowLogSummary 0}}
+                                   {{if .SampleSQL}}
+                                       <th class="text-left">Sample SQL</th> 
+                                   {{end}}
+                                {{end}}
                             {{else}}
                                 <th class="text-center">排名</th>
                                 <th class="text-center">总耗时</th>
@@ -163,8 +168,8 @@ const temp = `
                                 <th class="text-center">平均耗时</th>
                                 <th class="text-center">平均扫描行数</th>
                                 <th class="text-center">平均发送行数</th>
-                                <th class="text-center">QueryId</th>
-                                <th style="width:50%" class="text-left">SQL语句</th>
+                                <th class="text-center">Digest</th>
+                                <th class="text-left">Sample SQL</th>
                             {{end}}
                             </tr>
                         </thead>
@@ -187,7 +192,10 @@ const temp = `
                                     <td class="text-center">{{ .FirstSeen}}</td>
                                     <td class="text-center">{{ .LastSeen}}</td>
                                     <td class="text-center">{{ .Database}}</td>
-                                    <td style="width:50%" class="text-left">{{ .SampleQuery}}</td>
+                                    <td class="text-left">{{ .DigestText}}</td>
+                                    {{if .SampleSQL}}
+                                       <td class="text-left">{{ .SampleSQL}}</td>
+                                    {{end}}
                                 </tr>
                                {{end}}
                             {{else}}
@@ -197,11 +205,11 @@ const temp = `
                                     <td class="text-center">{{ .ResponseTime}}</td>
                                     <td class="text-center">{{ .ResponseRatio}}</td>
                                     <td class="text-center">{{ .Calls}}</td>        
-				    <td class="text-center">{{ .R_Call}}</td>
+				    <td class="text-center">{{ .AvgExecTime}}</td>
 				    <td class="text-center">{{ .RowsExamine}}</td>
                                     <td class="text-center">{{ .RowsSent}}</td>
-                                    <td class="text-center">{{ .QueryId}}</td>
-                                    <td style="width:50%" class="text-left">{{ .Example}}</td>
+                                    <td class="text-center">{{ .Digest}}</td>
+                                    <td class="text-left">{{range .SampleSQL}}{{.}};<br>{{end}}</td>
                                 </tr>
                                 {{end}}
                             {{end}}
@@ -228,7 +236,6 @@ type Config struct {
 	Port       int
 	PtCmd      string
 	Slowlog    string
-	All        bool
 	Since      string
 	Until      string
 	Yday       bool
@@ -243,7 +250,7 @@ slow_log_summary -source <source_type> -r <output_file> [other options]
 
 Example:
 ./slow_log_summary -source perf -h 10.0.0.168 -P 3306 -u root -p '123456'
-./slow_log_summary -source slowlog -pt /usr/local/bin/pt-query-digest -slowlog /data/mysql/3306/data/n1-slow.log -all
+./slow_log_summary -source slowlog -pt /usr/local/bin/pt-query-digest -slowlog /data/mysql/3306/data/n1-slow.log
 
 Common Options:
   -help
@@ -278,10 +285,8 @@ Options when source is 'slowlog':
     Parse only queries newer than this value, YYYY-MM-DD [HH:MM:SS]
   -until string
     Parse only queries older than this value, YYYY-MM-DD [HH:MM:SS]
-  -all
-    Parse the whole slowlog
   -yday
-    Parse yesterday's slowlog (default true)
+    Parse yesterday's slowlog
 `)
 }
 
@@ -300,8 +305,7 @@ func (c *Config) ParseFlags() {
 	f.StringVar(&c.Slowlog, "slowlog", "", "Absolute path for slowlog. Example:/var/log/mysql/node1-slow.log")
 	f.StringVar(&c.Since, "since", "", "Parse only queries newer than this value,YYYY-MM-DD [HH:MM:SS]")
 	f.StringVar(&c.Until, "until", "", "Parse only queries older than this value,YYYY-MM-DD [HH:MM:SS]")
-	f.BoolVar(&c.All, "all", false, "Parse the whole slowlog")
-	f.BoolVar(&c.Yday, "yday", true, "Parse yesterday's slowlog")
+	f.BoolVar(&c.Yday, "yday", false, "Parse yesterday's slowlog")
 	f.StringVar(&c.ResultFile, "r", resultFileName, "Direct output to a given file")
 	f.Parse(os.Args[1:])
 	if c.Help {
@@ -336,14 +340,31 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, slowlogFile str
 	}
 	lines := strings.Split(string(slowLog), "\n")
 	linesNums := len(lines)
+	timeRangeFlag := false
+	var timeRangeStart string
+	var timeRangeEnd string
 	profileFlag := false
-	exampleFlag := false
-	exampleSQL := []string{}
-	exampleSQLInfo := make(map[string]string)
+	sampleFlag := false
+	sampleSQL := []string{}
+	sampleSQLInfo := make(map[string]string)
 	slowLogProfile := [][]string{}
-	exampleSQLs := make(map[string]map[string]string)
+	sampleSQLs := make(map[string]map[string]string)
 	var queryID string
 	for k, line := range lines {
+		if strings.Contains(line, "# Overall") {
+			timeRangeFlag = true
+			continue
+		}
+		if timeRangeFlag {
+			if strings.HasPrefix(line, "# Time range") {
+				re, _ := regexp.Compile(" +")
+				rowToArray := re.Split(line, -1)
+				timeRangeStart, timeRangeEnd = rowToArray[3], rowToArray[5]
+				timeRangeStart = strings.Replace(timeRangeStart, "T", " ", 1)
+				timeRangeEnd = strings.Replace(timeRangeEnd, "T", " ", 1)
+				timeRangeFlag = false
+			}
+		}
 		if strings.Contains(line, "# Profile") {
 			profileFlag = true
 			continue
@@ -361,29 +382,35 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, slowlogFile str
 		} else if strings.Contains(line, "concurrency, ID 0x") {
 			re := regexp.MustCompile(`(?U)ID (0x.*) `)
 			queryID = re.FindStringSubmatch(line)[1]
-			exampleFlag = true
-			exampleSQL = []string{}
-			exampleSQLInfo = make(map[string]string)
-		} else if exampleFlag && (strings.HasPrefix(line, "# Rows sent") || strings.HasPrefix(line, "# Rows examine")) {
+			sampleFlag = true
+			sampleSQL = []string{}
+			sampleSQLInfo = make(map[string]string)
+		} else if sampleFlag && (strings.HasPrefix(line, "# Exec time") || strings.HasPrefix(line, "# Lock time")) {
 			re, _ := regexp.Compile(" +")
-			rowToArray := re.Split(line, 9)
-			exampleSQLInfo[rowToArray[2]] = rowToArray[7]
-		} else if exampleFlag && (!strings.HasPrefix(line, "#")) && len(line) != 0 {
-			exampleSQL = append(exampleSQL, line)
-		} else if exampleFlag && (len(line) == 0 || k == (linesNums-1)) {
-			exampleFlag = false
-			exampleSQLInfo["exampleSQL"] = strings.Join(exampleSQL, "\n")
-			exampleSQLs[queryID] = exampleSQLInfo
+			rowToArray := re.Split(line, -1)
+			sampleSQLInfo[rowToArray[1]] = rowToArray[7]
+		} else if sampleFlag && (strings.HasPrefix(line, "# Rows sent") || strings.HasPrefix(line, "# Rows examine")) {
+			re, _ := regexp.Compile(" +")
+			rowToArray := re.Split(line, -1)
+			sampleSQLInfo[rowToArray[2]] = rowToArray[7]
+		} else if sampleFlag && (!strings.HasPrefix(line, "#")) && len(line) != 0 {
+			sampleSQL = append(sampleSQL, line)
+		} else if sampleFlag && (len(line) == 0 || k == (linesNums-1)) {
+			sampleFlag = false
+			sampleSQLText := strings.Join(sampleSQL, "\n")
+			sampleSQLText = strings.TrimRight(sampleSQLText, "\\G")
+			sampleSQLInfo["sampleSQL"] = sampleSQLText
+			sampleSQLs[queryID] = sampleSQLInfo
 		}
 	}
 
 	for i, v := range slowLogProfile {
-		for key := range exampleSQLs {
+		for key := range sampleSQLs {
 			miniQueryID := strings.Trim(v[2], ".")
 			if strings.Contains(key, miniQueryID) {
-				v[8] = exampleSQLs[key]["exampleSQL"]
+				v[8] = sampleSQLs[key]["sampleSQL"]
 				v[2] = key
-				v = append(v, exampleSQLs[key]["sent"], exampleSQLs[key]["examine"])
+				v = append(v, sampleSQLs[key]["Exec"], sampleSQLs[key]["Lock"], sampleSQLs[key]["sent"], sampleSQLs[key]["examine"])
 				slowLogProfile[i] = v
 				break
 			}
@@ -395,19 +422,22 @@ func getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd []string, slowlogFile str
 		ResponseTime  string
 		ResponseRatio string
 		Calls         string
-		R_Call        string
-		QueryId       string
-		Example       string
+		AvgExecTime   string
+		AvgLockTime   string
 		RowsSent      string
 		RowsExamine   string
+		Digest        string
+		SampleSQL     []string
 	}
 
 	slowlogs := []slowlog{}
 	for _, value := range slowLogProfile {
-		slowlogrecord := slowlog{value[1], value[3], value[4], value[5], value[6], value[2], value[8], value[9], value[10]}
+		// 之所以要将字符串分隔为切片，主要是为了模板渲染时生成换行符<br>
+		sampleSQLSplitResult := strings.Split(value[8], "\\G")
+		slowlogrecord := slowlog{value[1], value[3], value[4], value[5], value[9], value[10], value[11], value[12], value[2], sampleSQLSplitResult}
 		slowlogs = append(slowlogs, slowlogrecord)
 	}
-	return map[string]interface{}{"slowLogSource": slowlogFile, "slowLogSummary": slowlogs, "now": now}
+	return map[string]interface{}{"slowLogSource": slowlogFile, "slowLogSummary": slowlogs, "now": now, "timeRangeStart": timeRangeStart, "timeRangeEnd": timeRangeEnd}
 }
 
 // 将纳秒时间戳格式化为日期时间字符串
@@ -519,8 +549,8 @@ func getSlowLogSummaryFromPerformanceSchema(username string, password string, ho
 
 	// 检查 MySQL 版本
 	var queryColumn string
-	if strings.HasPrefix(mysqlVersion, "8") {
-		queryColumn = "QUERY_SAMPLE_TEXT AS query"
+	if IsMySQLVersionGreaterOrEqual(mysqlVersion, "8.0.0") {
+		queryColumn = ",QUERY_SAMPLE_TEXT AS sample_query"
 		if IsMySQLVersionGreaterOrEqual(mysqlVersion, "8.0.28") {
 			// 查询 performance_schema.setup_consumers 中 'events_statements_cpu' 记录的 enabled 列
 			var eventsStatementsCPUEnabled string
@@ -535,9 +565,7 @@ func getSlowLogSummaryFromPerformanceSchema(username string, password string, ho
 		if IsMySQLVersionGreaterOrEqual(mysqlVersion, "8.0.31") {
 			queryColumn += ", FORMAT_BYTES(MAX_TOTAL_MEMORY) AS max_total_memory"
 		}
-	} else if strings.HasPrefix(mysqlVersion, "5.7") || strings.HasPrefix(mysqlVersion, "5.6") {
-		queryColumn = "DIGEST_TEXT AS query"
-	} else {
+	} else if !IsMySQLVersionGreaterOrEqual(mysqlVersion, "5.6.0") {
 		log.Fatalf("Error: MySQL version %s is not supported. This tool only supports MySQL 5.6 and above.", mysqlVersion)
 	}
 
@@ -563,16 +591,16 @@ func getSlowLogSummaryFromPerformanceSchema(username string, password string, ho
         SUM_SORT_ROWS AS rows_sorted,
         SUM_SORT_MERGE_PASSES AS sort_merge_passes,
         DIGEST AS digest,
+        DIGEST_TEXT AS digest_text,
         DATE_FORMAT(FIRST_SEEN, '%%Y-%%m-%%d %%H:%%i:%%s') AS first_seen,
-        DATE_FORMAT(LAST_SEEN, '%%Y-%%m-%%d %%H:%%i:%%s') AS last_seen,
+        DATE_FORMAT(LAST_SEEN, '%%Y-%%m-%%d %%H:%%i:%%s') AS last_seen
         %s
     FROM performance_schema.events_statements_summary_by_digest
     ORDER BY total_latency DESC
 `, queryColumn)
-
 	type QuerySummary struct {
 		RowNum          int
-		SampleQuery     string `db:"query"`
+		SampleSQL       string `db:"sample_query"`
 		Database        string `db:"db"`
 		FullScan        string `db:"full_scan"`
 		ExecutionCount  int    `db:"exec_count"`
@@ -593,6 +621,7 @@ func getSlowLogSummaryFromPerformanceSchema(username string, password string, ho
 		RowsSorted      int    `db:"rows_sorted"`
 		SortMergePasses int    `db:"sort_merge_passes"`
 		Digest          string `db:"digest"`
+		DigestText      string `db:"digest_text"`
 		FirstSeen       string `db:"first_seen"`
 		LastSeen        string `db:"last_seen"`
 		CpuTimeAvg      string `db:"cup_time_avg"`
@@ -611,41 +640,44 @@ func getSlowLogSummaryFromPerformanceSchema(username string, password string, ho
 		summary.MaxLatency = formatPicoTime(summary.MaxLatency)
 		summary.AvgLatency = formatPicoTime(summary.AvgLatency)
 		summary.LockLatency = formatPicoTime(summary.LockLatency)
+		if summary.CpuTimeAvg != "" {
+			summary.CpuTimeAvg = formatPicoTime(summary.CpuTimeAvg)
+		}
 		QuerySummaries[i] = summary
 	}
 	return map[string]interface{}{"slowLogSource": "performance_schema", "slowLogSummary": QuerySummaries, "now": now, "instanceAddr": fmt.Sprintf("%s:%d", host, port), "mysqlVersion": mysqlVersion}
 }
 
-func validateAndConstructCmd(pt, slowlog, since, until string, all, yday bool) string {
+func validateAndConstructCmd(pt, slowlog, since, until string, yday bool) []string {
 
 	if len(pt) == 0 || len(slowlog) == 0 {
-		log.Fatalf("Error: Both --pt and --slowlog parameters are required.")
-	}
-
-	if all && (len(since) != 0 || len(until) != 0) {
-		log.Fatalf("Error: The --all and --since (or --until) parameters are mutually exclusive.")
-
+		log.Fatalf("Error: Both -pt and -slowlog parameters are required.")
 	}
 
 	today := time.Now().Format("2006-01-02")
 	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 
-	parameter := make(map[string]string)
-	if all {
-		parameter["since"] = ""
-		parameter["until"] = ""
-	} else if len(since) != 0 || len(until) != 0 {
+	var ptQueryDigestCmd []string
+	ptQueryDigestCmd = append(ptQueryDigestCmd, pt)
+	ptQueryDigestCmd = append(ptQueryDigestCmd, slowlog)
+	if len(since) != 0 || yday {
+		ptQueryDigestCmd = append(ptQueryDigestCmd, "--since")
 		if len(since) != 0 {
-			parameter["since"] = "--since " + since
+			ptQueryDigestCmd = append(ptQueryDigestCmd, since)
+		} else {
+			ptQueryDigestCmd = append(ptQueryDigestCmd, yesterday)
 		}
-		if len(until) != 0 {
-			parameter["until"] = "--until " + until
-		}
-	} else if yday {
-		parameter["since"] = "--since " + yesterday
-		parameter["until"] = "--until " + today
+
 	}
-	ptQueryDigestCmd := strings.Join([]string{pt, parameter["since"], parameter["until"], slowlog}, " ")
+	if len(until) != 0 || yday {
+		ptQueryDigestCmd = append(ptQueryDigestCmd, "--until")
+		if len(until) != 0 {
+			ptQueryDigestCmd = append(ptQueryDigestCmd, until)
+		} else {
+			ptQueryDigestCmd = append(ptQueryDigestCmd, today)
+		}
+
+	}
 	return ptQueryDigestCmd
 }
 
@@ -674,9 +706,8 @@ func main() {
 	}
 
 	if conf.Source == "slowlog" {
-		query_cmd := validateAndConstructCmd(conf.PtCmd, conf.Slowlog, conf.Since, conf.Until, conf.All, conf.Yday)
-		parts := strings.Fields(query_cmd)
-		report_content = getSlowLogSummaryByPtQueryDigest(parts, conf.Slowlog, now)
+		ptQueryDigestCmd := validateAndConstructCmd(conf.PtCmd, conf.Slowlog, conf.Since, conf.Until, conf.Yday)
+		report_content = getSlowLogSummaryByPtQueryDigest(ptQueryDigestCmd, conf.Slowlog, now)
 	}
 	// 创建并写入HTML报告
 	var report = template.Must(template.New("slowlog").Parse(temp))
