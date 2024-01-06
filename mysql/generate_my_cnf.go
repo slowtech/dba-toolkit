@@ -88,6 +88,7 @@ innodb_large_prefix = ON{{end}}
 innodb_print_all_deadlocks = ON
 innodb_numa_interleave = ON
 innodb_open_files = 65535
+innodb_adaptive_hash_index = OFF
 
 # Replication
 server_id = {{.server_id}}
