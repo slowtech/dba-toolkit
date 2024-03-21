@@ -182,7 +182,7 @@ def get_transaction_info(start_datetime,stop_datetime,sort_condition,extend,limi
         opr_info=query_and_print([],get_opr_sql,False)
         opr_info_dict={}
         for each_opr in opr_info:
-            if opr_info_dict.has_key(each_opr[0]):
+            if each_opr[0] in opr_info_dict:
                 opr_info_dict[each_opr[0]].append([each_opr[1],each_opr[2],each_opr[3]])
             else:
                 opr_info_dict[each_opr[0]]=[[each_opr[1],each_opr[2],each_opr[3]]]
