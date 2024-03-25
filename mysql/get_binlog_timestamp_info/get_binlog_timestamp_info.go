@@ -8,12 +8,12 @@ import (
 	"github.com/go-mysql-org/go-mysql/replication"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/siddontang/go-log/log"
+	"golang.org/x/crypto/ssh/terminal"
 	"golang.org/x/net/context"
 	"os"
 	"strconv"
-	"text/tabwriter"
 	"time"
-	"golang.org/x/crypto/ssh/terminal"
+	"github.com/olekukonko/tablewriter"
 )
 
 type BinlogInfo struct {
@@ -73,7 +73,7 @@ func getBinaryLogs(dsn string) ([][]string, error) {
 	// 执行 SQL 查询
 	rows, err := db.Query("SHOW BINARY LOGS;")
 	if err != nil {
-		return nil, fmt.Errorf("error executing query: %v", err)
+		return nil, fmt.Errorf("error executing SHOW BINARY LOGS: %v", err)
 	}
 	defer rows.Close()
 
@@ -103,13 +103,11 @@ func getFormatDescriptionEventTimestamp(cfg replication.BinlogSyncerConfig, binl
 	syncer := replication.NewBinlogSyncer(cfg)
 	defer syncer.Close()
 
-	// 设置起始位置，获取指定 binlog 文件的第一个事件
 	streamer, err := syncer.StartSync(mysql.Position{Name: binlogFilename, Pos: 4})
 	if err != nil {
 		return 0, fmt.Errorf("error starting binlog syncer: %v", err)
 	}
 
-	// 读取 binlog 的第一个事件
 	ctx := context.Background()
 	for {
 		// 读取事件
@@ -129,18 +127,18 @@ func main() {
 	// Parse command line arguments
 	host := flag.String("h", "localhost", "MySQL host")
 	port := flag.Int("P", 3306, "MySQL port")
-	user := flag.String("u", "", "MySQL user")
+	user := flag.String("u", "root", "MySQL user")
 	password := flag.String("p", "", "MySQL password")
 	flag.Parse()
-	       if *password == "" {
-                        fmt.Print("Enter MySQL password: ")
-                        bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-                        fmt.Println()
-                        if err != nil {
-                                log.Fatalf("Error: Failed to read the password - %v", err)
-                        }
-                        *password = string(bytePassword)
-                }
+	if *password == "" {
+		fmt.Print("Enter MySQL password: ")
+		bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			log.Fatalf("Error: Failed to read the password - %v", err)
+		}
+		*password = string(bytePassword)
+	}
 
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/mysql", *user, *password, *host, *port)
 
@@ -162,7 +160,6 @@ func main() {
 	cfg.Logger = log.NewDefault(&log.NullHandler{})
 
 	var binlogs []BinlogInfo
-	// 输出存储的日志文件名列表
 	var logEndTime uint32
 	for i := len(binaryLogs) - 1; i >= 0; i-- {
 		log := binaryLogs[i]
@@ -175,8 +172,9 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.TabIndent)
-	fmt.Fprintf(w, "Log File\t\tFile Size\t\tStart Time\t\tEnd Time\t\tDuration\n")
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetAutoFormatHeaders(false)
+	table.SetHeader([]string{"Log_name", "File_size", "Start_time", "End_time", "Duration"})
 
 	for i := len(binlogs) - 1; i >= 0; i-- {
 		binlog := binlogs[i]
@@ -207,8 +205,8 @@ func main() {
 		if endUnixTimestamp == 0 {
 			endFormattedTime, durationFormatted = "", ""
 		}
-		fmt.Fprintf(w, "%s\t\t%d(%s)\t\t%s\t\t%s\t\t%s\n", binlog.LogName, fileSize, ConvertBytesToHumanReadable(fileSize), startFormattedTime, endFormattedTime, durationFormatted)
+		table.Append([]string{binlog.LogName, fmt.Sprintf("%d (%s)",fileSize,ConvertBytesToHumanReadable(fileSize)), startFormattedTime, endFormattedTime, durationFormatted})
 	}
-	w.Flush()
+	table.Render()
 
 }
