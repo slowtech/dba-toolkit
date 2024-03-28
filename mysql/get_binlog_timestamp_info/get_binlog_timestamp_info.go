@@ -176,6 +176,8 @@ func main() {
 	port := flag.Int("P", 3306, "MySQL port")
 	user := flag.String("u", "root", "MySQL user")
 	password := flag.String("p", "", "MySQL password")
+	var verbose bool
+	flag.BoolVar(&verbose, "v", false, "Enable verbose logging")
 	flag.Parse()
 	if *password == "" {
 		fmt.Print("Enter MySQL password: ")
@@ -195,6 +197,11 @@ func main() {
 		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
+	if verbose {
+		timestamp := time.Now().Format("2006/01/02 15:04:05")
+		fmt.Printf("[%s] [info] get_binlog_timestamp_info.go SHOW BINARY LOGS done, %d binlogs to analyze\n", timestamp, len(binaryLogs))
+
+	}
 
 	cfg := replication.BinlogSyncerConfig{
 		ServerID: 100,
@@ -213,6 +220,10 @@ func main() {
 		log := binaryLogs[i]
 		logName, fileSize := log[0], log[1]
 		startTime, previousGTIDs, err := getFormatAndPreviousGTIDs(cfg, logName)
+		if verbose {
+			timestamp := time.Now().Format("2006/01/02 15:04:05")
+			fmt.Printf("[%s] [info] get_binlog_timestamp_info.go %s done, still %d binlogs to analyze\n", timestamp, logName, i)
+		}
 		binlogs = append(binlogs, BinlogInfo{logName, fileSize, startTime, logEndTime, previousGTIDs, nextLogPreviousGTIDs})
 		logEndTime = startTime
 		nextLogPreviousGTIDs = previousGTIDs
