@@ -7,20 +7,55 @@ import (
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/olekukonko/tablewriter"
 	"github.com/siddontang/go-log/log"
 	"golang.org/x/crypto/ssh/terminal"
 	"golang.org/x/net/context"
 	"os"
 	"strconv"
+	"strings"
 	"time"
-	"github.com/olekukonko/tablewriter"
 )
 
 type BinlogInfo struct {
-	LogName   string
-	FileSize  string
-	StartTime uint32
-	EndTime   uint32
+	LogName              string
+	FileSize             string
+	StartTime            uint32
+	EndTime              uint32
+	PreviousGTIDs        string
+	NextLogPreviousGTIDs string
+}
+
+func GetGTIDSubtract(gtid1, gtid2 string) (string, error) {
+	// 解析 GTID
+	parsedGTID1, err := mysql.ParseGTIDSet("mysql", gtid1)
+	if err != nil {
+		return "", fmt.Errorf("error parsing GTID1: %v", err)
+	}
+	m1 := *parsedGTID1.(*mysql.MysqlGTIDSet)
+	parsedGTID2, err := mysql.ParseGTIDSet("mysql", gtid2)
+	if err != nil {
+		return "", fmt.Errorf("error parsing GTID2: %v", err)
+	}
+
+	m2 := *parsedGTID2.(*mysql.MysqlGTIDSet)
+	// 计算差值
+	err = m1.Minus(m2)
+	if err != nil {
+		return "", fmt.Errorf("error calculating GTID difference: %v", err)
+	}
+
+	return m1.String(), nil
+}
+
+func ExtractGTIDSuffix(gtidStr string) string {
+	if !strings.Contains(gtidStr, ",") && strings.Contains(gtidStr, ":") {
+		parts := strings.Split(gtidStr, ":")
+		if len(parts) == 2 {
+			return parts[1]
+		}
+	}
+	return gtidStr
 }
 
 func ConvertUnixTimestampToFormattedTime(unixTimestamp int64) (string, error) {
@@ -98,29 +133,41 @@ func getBinaryLogs(dsn string) ([][]string, error) {
 	return binaryLogs, nil
 }
 
-func getFormatDescriptionEventTimestamp(cfg replication.BinlogSyncerConfig, binlogFilename string) (uint32, error) {
+func getFormatAndPreviousGTIDs(cfg replication.BinlogSyncerConfig, binlogFilename string) (uint32, string, error) {
 	// 创建 BinlogSyncer 实例
 	syncer := replication.NewBinlogSyncer(cfg)
 	defer syncer.Close()
 
 	streamer, err := syncer.StartSync(mysql.Position{Name: binlogFilename, Pos: 4})
 	if err != nil {
-		return 0, fmt.Errorf("error starting binlog syncer: %v", err)
+		return 0, "", fmt.Errorf("error starting binlog syncer: %v", err)
 	}
 
+	var formatTimestamp uint32
+	var previousGTIDs string
+
 	ctx := context.Background()
-	for {
+	for i := 0; i < 3; i++ {
 		// 读取事件
 		ev, err := streamer.GetEvent(ctx)
 		if err != nil {
-			return 0, fmt.Errorf("error getting binlog event: %v", err)
+			return 0, "", fmt.Errorf("error getting binlog event: %v", err)
 		}
 
-		// 如果是 FORMAT_DESCRIPTION_EVENT，则返回时间戳并跳出循环
+		// 如果是 FORMAT_DESCRIPTION_EVENT，则记录时间戳
 		if ev.Header.EventType == replication.FORMAT_DESCRIPTION_EVENT {
-			return ev.Header.Timestamp, nil
+			formatTimestamp = ev.Header.Timestamp
+		}
+
+		// 如果是 PREVIOUS_GTIDS_EVENT，则记录其内容并跳出循环
+		if ev.Header.EventType == replication.PREVIOUS_GTIDS_EVENT {
+			previousGTIDsEvent := ev.Event.(*replication.PreviousGTIDsEvent)
+			previousGTIDs = previousGTIDsEvent.GTIDSets
+			break
 		}
 	}
+
+	return formatTimestamp, previousGTIDs, nil
 }
 
 func main() {
@@ -161,12 +208,15 @@ func main() {
 
 	var binlogs []BinlogInfo
 	var logEndTime uint32
+	var nextLogPreviousGTIDs string
 	for i := len(binaryLogs) - 1; i >= 0; i-- {
 		log := binaryLogs[i]
 		logName, fileSize := log[0], log[1]
-		startTime, err := getFormatDescriptionEventTimestamp(cfg, logName)
-		binlogs = append(binlogs, BinlogInfo{logName, fileSize, startTime, logEndTime})
+		startTime, previousGTIDs, err := getFormatAndPreviousGTIDs(cfg, logName)
+		binlogs = append(binlogs, BinlogInfo{logName, fileSize, startTime, logEndTime, previousGTIDs, nextLogPreviousGTIDs})
 		logEndTime = startTime
+		nextLogPreviousGTIDs = previousGTIDs
+
 		if err != nil {
 			fmt.Println("Error:", err)
 			os.Exit(1)
@@ -174,7 +224,7 @@ func main() {
 	}
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetAutoFormatHeaders(false)
-	table.SetHeader([]string{"Log_name", "File_size", "Start_time", "End_time", "Duration"})
+	table.SetHeader([]string{"Log_name", "File_size", "Start_time", "End_time", "Duration", "GTID"})
 
 	for i := len(binlogs) - 1; i >= 0; i-- {
 		binlog := binlogs[i]
@@ -205,7 +255,14 @@ func main() {
 		if endUnixTimestamp == 0 {
 			endFormattedTime, durationFormatted = "", ""
 		}
-		table.Append([]string{binlog.LogName, fmt.Sprintf("%d (%s)",fileSize,ConvertBytesToHumanReadable(fileSize)), startFormattedTime, endFormattedTime, durationFormatted})
+		gtidDifference, err := GetGTIDSubtract(binlog.NextLogPreviousGTIDs, binlog.PreviousGTIDs)
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+
+		}
+
+		table.Append([]string{binlog.LogName, fmt.Sprintf("%d (%s)", fileSize, ConvertBytesToHumanReadable(fileSize)), startFormattedTime, endFormattedTime, durationFormatted, ExtractGTIDSuffix(gtidDifference)})
 	}
 	table.Render()
 
