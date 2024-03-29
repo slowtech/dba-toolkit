@@ -159,7 +159,7 @@ def transaction_per_second(start_datetime,stop_datetime,limit):
 def get_transaction_info(start_datetime,stop_datetime,sort_condition,extend,limit):
     if start_datetime:
         get_transaction_sql = "select transaction_name,transaction_begin_time,transaction_commit_time,transaction_begin_log_pos, \
-                   transaction_commit_log_pos,strftime('%s',transaction_commit_time)-strftime('%s',transaction_begin_time),\
+                   transaction_commit_log_pos,strftime('%%s',transaction_commit_time)-strftime('%%s',transaction_begin_time),\
                   transaction_commit_log_pos-transaction_begin_log_pos from transaction_info where transaction_commit_time \
                   BETWEEN '%s' and '%s'"%(start_datetime,stop_datetime)
     else:
